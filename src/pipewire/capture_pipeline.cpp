@@ -68,6 +68,29 @@ bool CapturePipeline::init(int pipewire_fd, uint32_t node_id) {
         params, 1
     );
 
+    // Create Output Stream (Virtual Camera / Screen)
+    static const struct pw_stream_events out_stream_events = {
+        .version = PW_VERSION_STREAM_EVENTS,
+        .state_changed = on_state_changed,
+    };
+
+    stream_out_ = pw_stream_new(core_, "WayBlur Privacy Screen", pw_properties_new(
+        PW_KEY_MEDIA_CLASS, "Video/Source",
+        PW_KEY_NODE_NAME, "wayblur-privacy-screen",
+        PW_KEY_NODE_DESCRIPTION, "WayBlur Privacy Screen",
+        nullptr
+    ));
+    if (stream_out_) {
+        pw_stream_add_listener(stream_out_, &stream_out_listener_, &out_stream_events, this);
+        pw_stream_connect(
+            stream_out_,
+            PW_DIRECTION_OUTPUT,
+            PW_ID_ANY,
+            static_cast<enum pw_stream_flags>(PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS),
+            params, 1
+        );
+    }
+
     start_time_ = std::chrono::steady_clock::now();
     return res == 0;
 }
@@ -82,6 +105,10 @@ bool CapturePipeline::start() {
 void CapturePipeline::stop() {
     if (loop_) {
         pw_thread_loop_stop(loop_);
+    }
+    if (stream_out_) {
+        pw_stream_destroy(stream_out_);
+        stream_out_ = nullptr;
     }
     if (stream_) {
         pw_stream_destroy(stream_);
@@ -131,22 +158,40 @@ void CapturePipeline::on_process(void* data) {
     auto* self = static_cast<CapturePipeline*>(data);
     if (!self || !self->stream_) return;
 
-    struct pw_buffer* b = pw_stream_dequeue_buffer(self->stream_);
-    if (!b) return;
+    struct pw_buffer* b_in = pw_stream_dequeue_buffer(self->stream_);
+    if (!b_in) return;
 
-    struct spa_buffer* buf = b->buffer;
-    if (buf->datas[0].data) {
+    struct spa_buffer* buf_in = b_in->buffer;
+    if (buf_in->datas[0].data) {
         FrameBuffer frame;
-        frame.data = static_cast<uint8_t*>(buf->datas[0].data);
+        frame.data = static_cast<uint8_t*>(buf_in->datas[0].data);
         frame.width = 1920;
         frame.height = 1080;
         frame.stride = 1920 * 4;
         frame.format = "RGBA";
 
         self->process_frame(frame);
+
+        if (self->stream_out_) {
+            struct pw_buffer* b_out = pw_stream_dequeue_buffer(self->stream_out_);
+            if (b_out) {
+                struct spa_buffer* buf_out = b_out->buffer;
+                if (buf_out->datas[0].data) {
+                    uint32_t size = buf_in->datas[0].chunk->size;
+                    if (size == 0) size = 1920 * 1080 * 4;
+                    memcpy(buf_out->datas[0].data, buf_in->datas[0].data, size);
+                    
+                    buf_out->datas[0].chunk->offset = 0;
+                    buf_out->datas[0].chunk->size = size;
+                    buf_out->datas[0].chunk->stride = 1920 * 4;
+                    
+                    pw_stream_queue_buffer(self->stream_out_, b_out);
+                }
+            }
+        }
     }
 
-    pw_stream_queue_buffer(self->stream_, b);
+    pw_stream_queue_buffer(self->stream_, b_in);
 }
 
 void CapturePipeline::on_state_changed(void*, enum pw_stream_state, enum pw_stream_state, const char*) {}

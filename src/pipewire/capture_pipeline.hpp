@@ -39,8 +39,10 @@ private:
     struct pw_thread_loop* loop_{nullptr};
     struct pw_context* context_{nullptr};
     struct pw_core* core_{nullptr};
-    struct pw_stream* stream_{nullptr};
+    struct pw_stream* stream_{nullptr}; // Input stream
+    struct pw_stream* stream_out_{nullptr}; // Output stream
     struct spa_hook stream_listener_{};
+    struct spa_hook stream_out_listener_{};
 
     std::vector<FilterRule> filter_rules_;
     PrivacyFilter filter_;

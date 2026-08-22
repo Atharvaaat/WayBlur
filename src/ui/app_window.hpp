@@ -38,7 +38,6 @@ private:
     ShareSessionMonitor session_monitor_;
     CapturePipeline pipeline_;
     WindowTracker window_tracker_;
-    PrivacyOverlay overlay_;
 
     GtkWidget* status_page_{nullptr};
     GtkWidget* status_switch_{nullptr};

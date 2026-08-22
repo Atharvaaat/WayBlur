@@ -28,7 +28,6 @@ core_sources = files(
   'src/gnome/mutter_integration.cpp',
   'src/security/share_session_monitor.cpp',
   'src/ui/app_window.cpp',
-  'src/ui/privacy_overlay.cpp',
   'src/cli/test_mode.cpp',
   'src/cli/benchmark.cpp',
   'src/cli/cli.cpp'
