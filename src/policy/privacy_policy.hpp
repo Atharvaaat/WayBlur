@@ -5,12 +5,12 @@
 
 #include <string>
 #include <vector>
-#include <memory>
 
 namespace wayblur {
 
 struct AppPolicy {
-    std::string app_id;
+    std::string app_id;       // Target ID (e.g. "keepassxc", "firefox", "*.internal.net")
+    std::string type{"app"};  // "app" or "dns"
     ActionType action{ActionType::Allow};
     int radius{30};
     std::string color{"black"};
@@ -26,6 +26,7 @@ public:
     bool save_config(const std::string& path = "");
 
     void add_policy(const AppPolicy& policy);
+    bool remove_policy(const std::string& target);
     AppPolicy get_policy_for_app(const std::string& app_id) const;
     ActionType get_default_action() const { return default_action_; }
     void set_default_action(ActionType action) { default_action_ = action; }

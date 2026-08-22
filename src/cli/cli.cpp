@@ -22,7 +22,9 @@ void print_usage() {
               << "Commands:\n"
               << "  doctor               Run system environment diagnostics\n"
               << "  capture [--source monitor|window] Start screen capture stream\n"
-              << "  policy               View or manage privacy policies\n"
+              << "  policy               View active privacy policies\n"
+              << "  policy --add <target> [--type app|dns] [--action blur|solid|pixelate]  Add a policy rule\n"
+              << "  policy --remove <target>  Remove a policy rule\n"
               << "  protect              Start active privacy screen-share protection\n"
               << "  test                 Run synthetic protection test mode\n"
               << "  benchmark            Profile pipeline latency and performance\n"
@@ -66,11 +68,56 @@ int run_cli(int argc, char* argv[]) {
     if (args[0] == "policy") {
         PrivacyPolicy policy;
         policy.load_config();
-        std::cout << "WayBlur Configured Application Policies:\n"
+
+        if (args.size() >= 3 && args[1] == "--add") {
+            std::string target = args[2];
+            std::string type = "app";
+            ActionType act = ActionType::Blur;
+
+            for (size_t i = 3; i < args.size(); ++i) {
+                if (args[i] == "--type" && i + 1 < args.size()) {
+                    type = args[++i];
+                } else if (args[i] == "--action" && i + 1 < args.size()) {
+                    std::string a = args[++i];
+                    if (a == "solid") act = ActionType::Solid;
+                    else if (a == "pixelate") act = ActionType::Pixelate;
+                    else act = ActionType::Blur;
+                }
+            }
+
+            AppPolicy pol;
+            pol.app_id = target;
+            pol.type = type;
+            pol.action = act;
+            pol.radius = 30;
+            pol.color = "black";
+            pol.block_size = 16;
+
+            policy.add_policy(pol);
+            if (policy.save_config()) {
+                std::cout << "✓ Added protection rule for target '" << target << "' [" << type << "].\n";
+            } else {
+                std::cerr << "Failed to save policy configuration.\n";
+            }
+            return 0;
+        }
+
+        if (args.size() >= 3 && args[1] == "--remove") {
+            std::string target = args[2];
+            if (policy.remove_policy(target)) {
+                policy.save_config();
+                std::cout << "✓ Removed protection rule for target '" << target << "'.\n";
+            } else {
+                std::cout << "Rule for target '" << target << "' not found.\n";
+            }
+            return 0;
+        }
+
+        std::cout << "WayBlur Configured Application & DNS Protection Policies:\n"
                   << "Config file: " << PrivacyPolicy::get_default_config_path() << "\n\n";
 
         for (const auto& p : policy.policies()) {
-            std::cout << "  - App ID: " << p.app_id << "\n"
+            std::cout << "  - Target: " << p.app_id << " [" << (p.type == "dns" ? "DNS/Domain" : "App") << "]\n"
                       << "    Action: " << (p.action == ActionType::Solid ? "solid" : (p.action == ActionType::Blur ? "blur" : "pixelate")) << "\n"
                       << "    Radius: " << p.radius << " | Color: " << p.color << "\n\n";
         }

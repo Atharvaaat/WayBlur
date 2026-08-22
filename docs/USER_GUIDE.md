@@ -55,6 +55,19 @@ protected_apps:
     action: blur
     radius: 25
 
+  - app_id: slack
+    action: blur
+    radius: 30
+
+protected_domains:
+  - domain: "*.internal.net"
+    action: blur
+    radius: 30
+
+  - domain: "*.bank.com"
+    action: solid
+    color: black
+
 defaults:
   action: allow
 ```

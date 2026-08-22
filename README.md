@@ -135,8 +135,36 @@ protected_apps:
     action: blur
     radius: 25
 
+  - app_id: slack
+    action: blur
+    radius: 30
+
+protected_domains:
+  - domain: "*.internal.net"
+    action: blur
+    radius: 30
+
+  - domain: "*.bank.com"
+    action: solid
+    color: black
+
 defaults:
   action: allow
+```
+
+### CLI Policy Management Commands:
+```bash
+# View active policies
+./build/wayblur policy
+
+# Add an application target
+./build/wayblur policy --add "slack" --type app --action blur
+
+# Add a DNS / Domain target
+./build/wayblur policy --add "*.bank.com" --type dns --action solid
+
+# Remove a target rule
+./build/wayblur policy --remove "*.bank.com"
 ```
 
 ---
