@@ -28,6 +28,7 @@ void AppWindow::update_protection_rules() {
 
     auto rules = window_tracker_.generate_filter_rules(policy_);
     pipeline_.set_filter_rules(rules);
+    overlay_.set_filter_rules(rules);
 }
 
 void AppWindow::start_protection() {
@@ -40,6 +41,8 @@ void AppWindow::start_protection() {
 
     pipeline_.init();
     pipeline_.start();
+
+    overlay_.show();
 
     // Initial rule generation
     update_protection_rules();
@@ -70,6 +73,7 @@ void AppWindow::stop_protection() {
         timer_id_ = 0;
     }
 
+    overlay_.hide();
     pipeline_.stop();
     session_monitor_.stop_monitoring();
 

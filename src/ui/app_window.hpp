@@ -7,6 +7,8 @@
 #include "pipewire/capture_pipeline.hpp"
 #include "policy/window_tracker.hpp"
 
+#include "ui/privacy_overlay.hpp"
+
 namespace wayblur {
 
 class AppWindow {
@@ -36,6 +38,7 @@ private:
     ShareSessionMonitor session_monitor_;
     CapturePipeline pipeline_;
     WindowTracker window_tracker_;
+    PrivacyOverlay overlay_;
 
     GtkWidget* status_page_{nullptr};
     GtkWidget* status_switch_{nullptr};
