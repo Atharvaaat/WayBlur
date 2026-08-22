@@ -81,9 +81,12 @@ void AppWindow::on_activate(GtkApplication* app, gpointer user_data) {
 }
 
 int AppWindow::run(int argc, char* argv[]) {
-    AdwApplication* app = adw_application_new("org.wayblur.desktop", G_APPLICATION_DEFAULT_FLAGS);
+    (void)argc;
+    AdwApplication* app = adw_application_new("org.wayblur.desktop", G_APPLICATION_NON_UNIQUE);
     g_signal_connect(app, "activate", G_CALLBACK(on_activate), this);
-    int status = g_application_run(G_APPLICATION(app), argc, argv);
+
+    char* app_argv[] = { argv[0], nullptr };
+    int status = g_application_run(G_APPLICATION(app), 1, app_argv);
     g_object_unref(app);
     return status;
 }
