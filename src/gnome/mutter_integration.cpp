@@ -88,12 +88,16 @@ bool install_gnome_extension() {
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import Gio from 'gi://Gio';
+import St from 'gi://St';
 
 const WayBlurDBusInterface = `
 <node>
   <interface name="org.gnome.Shell.WayBlur">
     <method name="GetWindowMetadata">
       <arg type="s" direction="out" name="json_metadata" />
+    </method>
+    <method name="SetPrivacyMasks">
+      <arg type="s" direction="in" name="json_masks" />
     </method>
   </interface>
 </node>`;
@@ -102,12 +106,58 @@ export default class WayBlurExtension extends Extension {
     enable() {
         this._dbusImpl = Gio.DBusExportedObject.wrapJSObject(WayBlurDBusInterface, this);
         this._dbusImpl.export(Gio.DBus.session, '/org/gnome/Shell/WayBlur');
+        this._maskActors = [];
     }
 
     disable() {
+        this._clearMasks();
         if (this._dbusImpl) {
             this._dbusImpl.unexport();
             this._dbusImpl = null;
+        }
+    }
+
+    _clearMasks() {
+        if (this._maskActors) {
+            for (let actor of this._maskActors) {
+                if (actor.get_parent()) {
+                    actor.get_parent().remove_child(actor);
+                }
+                actor.destroy();
+            }
+            this._maskActors = [];
+        }
+    }
+
+    SetPrivacyMasks(json_masks) {
+        this._clearMasks();
+        try {
+            let masks = JSON.parse(json_masks);
+            for (let m of masks) {
+                let color = m.type === 'solid' ? 'rgba(15, 15, 20, 0.98)' : 'rgba(30, 35, 50, 0.95)';
+                let labelText = m.type === 'solid' ? 'SOLID MASK' : 'BLUR MASK';
+                
+                let container = new St.BoxLayout({
+                    style: `background-color: ${color}; border: 2px solid rgba(80, 100, 180, 0.8); border-radius: 8px;`,
+                    x: m.x,
+                    y: m.y,
+                    width: m.width,
+                    height: m.height,
+                    reactive: false // Click-through
+                });
+                
+                // Add Privacy Badge
+                let badge = new St.Label({
+                    text: `🔒 WAYBLUR PROTECTED (${labelText})`,
+                    style: 'color: white; font-weight: bold; font-size: 14px; margin: 24px;'
+                });
+                container.add_child(badge);
+
+                Main.layoutManager.uiGroup.add_child(container);
+                this._maskActors.push(container);
+            }
+        } catch (e) {
+            console.error('[WayBlur] Error parsing masks:', e);
         }
     }
 
@@ -209,6 +259,43 @@ std::vector<SurfaceWindowInfo> MutterIntegration::fetch_surface_metadata() {
     }
 
     return result;
+}
+
+void MutterIntegration::send_privacy_masks(const std::vector<FilterRule>& rules) {
+    if (!conn_) return;
+
+    std::stringstream ss;
+    ss << "[";
+    bool first = true;
+    for (const auto& rule : rules) {
+        if (rule.action == ActionType::Allow) continue;
+        if (!first) ss << ",";
+        ss << "{";
+        ss << "\"x\":" << rule.box.x << ",";
+        ss << "\"y\":" << rule.box.y << ",";
+        ss << "\"width\":" << rule.box.width << ",";
+        ss << "\"height\":" << rule.box.height << ",";
+        ss << "\"type\":\"" << (rule.action == ActionType::Solid ? "solid" : "blur") << "\"";
+        ss << "}";
+        first = false;
+    }
+    ss << "]";
+
+    GVariant* params = g_variant_new("(s)", ss.str().c_str());
+    g_dbus_connection_call(
+        conn_,
+        "org.gnome.Shell",
+        "/org/gnome/Shell/WayBlur",
+        "org.gnome.Shell.WayBlur",
+        "SetPrivacyMasks",
+        params,
+        nullptr,
+        G_DBUS_CALL_FLAGS_NONE,
+        1000,
+        nullptr,
+        nullptr,
+        nullptr
+    );
 }
 
 } // namespace wayblur

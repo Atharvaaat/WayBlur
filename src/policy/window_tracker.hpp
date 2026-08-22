@@ -20,6 +20,8 @@ public:
     void inject_synthetic_window(const std::string& app_id, const BoundingBox& box);
     void clear_synthetic_windows();
 
+    MutterIntegration& get_mutter() { return mutter_; }
+
 private:
     MutterIntegration mutter_;
     std::vector<SurfaceWindowInfo> synthetic_windows_;

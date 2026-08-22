@@ -28,6 +28,7 @@ void AppWindow::update_protection_rules() {
 
     auto rules = window_tracker_.generate_filter_rules(policy_);
     pipeline_.set_filter_rules(rules);
+    window_tracker_.get_mutter().send_privacy_masks(rules);
 }
 
 void AppWindow::start_protection() {
@@ -72,6 +73,9 @@ void AppWindow::stop_protection() {
 
     pipeline_.stop();
     session_monitor_.stop_monitoring();
+
+    std::vector<FilterRule> empty_rules;
+    window_tracker_.get_mutter().send_privacy_masks(empty_rules);
 
     if (status_page_) {
         adw_status_page_set_title(ADW_STATUS_PAGE(status_page_), "Protection Inactive");

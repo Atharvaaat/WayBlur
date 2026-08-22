@@ -23,6 +23,7 @@ public:
 
     bool init();
     std::vector<SurfaceWindowInfo> fetch_surface_metadata();
+    void send_privacy_masks(const std::vector<FilterRule>& rules);
 
     bool is_available() const { return available_; }
 
