@@ -3,6 +3,9 @@
 
 #include <adwaita.h>
 #include "policy/privacy_policy.hpp"
+#include "security/share_session_monitor.hpp"
+#include "pipewire/capture_pipeline.hpp"
+#include "policy/window_tracker.hpp"
 
 namespace wayblur {
 
@@ -13,6 +16,9 @@ public:
 
     int run(int argc, char* argv[]);
 
+    void start_protection();
+    void stop_protection();
+
 private:
     static void on_activate(GtkApplication* app, gpointer user_data);
     void build_ui(GtkApplication* app);
@@ -21,11 +27,23 @@ private:
     void add_new_rule(const std::string& target, const std::string& type, ActionType action);
     void remove_rule(const std::string& target);
 
+    void run_doctor_dialog(GtkWindow* parent);
+    void run_testmode_dialog(GtkWindow* parent);
+    void run_benchmark_dialog(GtkWindow* parent);
+
     PrivacyPolicy policy_;
+    ShareSessionMonitor session_monitor_;
+    CapturePipeline pipeline_;
+    WindowTracker window_tracker_;
+
+    GtkWidget* status_page_{nullptr};
+    GtkWidget* status_switch_{nullptr};
     GtkWidget* pref_group_{nullptr};
     GtkWidget* target_entry_{nullptr};
     GtkWidget* type_combo_{nullptr};
     GtkWidget* action_combo_{nullptr};
+
+    bool is_protecting_{false};
 };
 
 } // namespace wayblur

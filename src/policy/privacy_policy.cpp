@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <algorithm>
+#include <cctype>
 
 namespace wayblur {
 
@@ -29,6 +30,22 @@ std::string action_to_string(ActionType act) {
     }
 }
 
+std::string to_lower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return std::tolower(c); });
+    return s;
+}
+
+std::string normalize_domain_target(const std::string& input) {
+    std::string s = to_lower(input);
+    if (s.rfind("https://", 0) == 0) s = s.substr(8);
+    else if (s.rfind("http://", 0) == 0) s = s.substr(7);
+    if (s.rfind("www.", 0) == 0) s = s.substr(4);
+    size_t slash = s.find('/');
+    if (slash != std::string::npos) s = s.substr(0, slash);
+    if (s.rfind("*.", 0) == 0) s = s.substr(2);
+    return s;
+}
+
 } // namespace
 
 PrivacyPolicy::PrivacyPolicy() {
@@ -48,7 +65,6 @@ bool PrivacyPolicy::load_config(const std::string& path) {
     std::string target_path = path.empty() ? config_path_ : path;
 
     if (!std::filesystem::exists(target_path)) {
-        // Populate default rules matching prompt requirements
         policies_ = {
             {"google-chrome", "app", ActionType::Blur, 30, "black", 16},
             {"firefox", "app", ActionType::Blur, 30, "black", 16},
@@ -64,7 +80,6 @@ bool PrivacyPolicy::load_config(const std::string& path) {
         YAML::Node config = YAML::LoadFile(target_path);
         policies_.clear();
 
-        // Load protected applications
         if (config["protected_apps"] && config["protected_apps"].IsSequence()) {
             for (const auto& node : config["protected_apps"]) {
                 AppPolicy pol;
@@ -78,7 +93,6 @@ bool PrivacyPolicy::load_config(const std::string& path) {
             }
         }
 
-        // Load protected DNS / domains
         if (config["protected_domains"] && config["protected_domains"].IsSequence()) {
             for (const auto& node : config["protected_domains"]) {
                 AppPolicy pol;
@@ -167,12 +181,26 @@ bool PrivacyPolicy::remove_policy(const std::string& target) {
     return false;
 }
 
-AppPolicy PrivacyPolicy::get_policy_for_app(const std::string& app_id) const {
+AppPolicy PrivacyPolicy::get_policy_for_app(const std::string& app_id, const std::string& title) const {
+    std::string norm_app = to_lower(app_id);
+    std::string norm_title = to_lower(title);
+
     for (const auto& p : policies_) {
-        if (p.app_id == app_id || (p.app_id.find('*') != std::string::npos && app_id.find(p.app_id.substr(0, p.app_id.find('*'))) == 0)) {
+        std::string norm_target = normalize_domain_target(p.app_id);
+
+        if (norm_target.empty()) continue;
+
+        // 1. Direct app match
+        if (norm_app.find(norm_target) != std::string::npos) {
+            return p;
+        }
+
+        // 2. Title match (domain or window title keyword like "outlook", "office.com", "bank.com")
+        if (!norm_title.empty() && norm_title.find(norm_target) != std::string::npos) {
             return p;
         }
     }
+
     return AppPolicy{app_id, "app", default_action_, 30, "black", 16};
 }
 

@@ -1,5 +1,10 @@
 #include "ui/app_window.hpp"
+#include "core/doctor.hpp"
+#include "cli/test_mode.hpp"
+#include "cli/benchmark.hpp"
+
 #include <iostream>
+#include <sstream>
 
 namespace wayblur {
 
@@ -8,13 +13,44 @@ struct RemoveContext {
     std::string target;
 };
 
+struct DialogContext {
+    AppWindow* window;
+    GtkWindow* parent;
+};
+
 AppWindow::AppWindow() = default;
-AppWindow::~AppWindow() = default;
+AppWindow::~AppWindow() {
+    stop_protection();
+}
+
+void AppWindow::start_protection() {
+    is_protecting_ = true;
+    session_monitor_.start_monitoring();
+    pipeline_.init();
+    pipeline_.start();
+
+    if (status_page_) {
+        adw_status_page_set_title(ADW_STATUS_PAGE(status_page_), "Privacy Protection Active");
+        adw_status_page_set_description(ADW_STATUS_PAGE(status_page_), "Status: ● PROTECTING | Screen sharing streams masked");
+        adw_status_page_set_icon_name(ADW_STATUS_PAGE(status_page_), "security-high-symbolic");
+    }
+}
+
+void AppWindow::stop_protection() {
+    is_protecting_ = false;
+    pipeline_.stop();
+    session_monitor_.stop_monitoring();
+
+    if (status_page_) {
+        adw_status_page_set_title(ADW_STATUS_PAGE(status_page_), "Protection Inactive");
+        adw_status_page_set_description(ADW_STATUS_PAGE(status_page_), "Status: ○ IDLE | Toggle switch to start protection");
+        adw_status_page_set_icon_name(ADW_STATUS_PAGE(status_page_), "security-medium-symbolic");
+    }
+}
 
 void AppWindow::populate_rules_list() {
     if (!pref_group_) return;
 
-    // Clear existing children except header
     GtkWidget* child = gtk_widget_get_first_child(pref_group_);
     while (child) {
         GtkWidget* next = gtk_widget_get_next_sibling(child);
@@ -38,13 +74,12 @@ void AppWindow::populate_rules_list() {
         gtk_widget_set_valign(sw, GTK_ALIGN_CENTER);
         adw_action_row_add_suffix(ADW_ACTION_ROW(row), sw);
 
-        // Delete button
         GtkWidget* btn_del = gtk_button_new_from_icon_name("user-trash-symbolic");
         gtk_widget_set_valign(btn_del, GTK_ALIGN_CENTER);
         gtk_widget_add_css_class(btn_del, "flat");
 
         auto* ctx = new RemoveContext{this, pol.app_id};
-        g_signal_connect_data(btn_del, "clicked", G_CALLBACK(+[](GtkButton*, gpointer user_data) {
+        g_signal_connect_data(btn_del, "clicked", G_CALLBACK((GCallback)+[](GtkButton*, gpointer user_data) {
             auto* c = static_cast<RemoveContext*>(user_data);
             if (c && c->window) {
                 c->window->remove_rule(c->target);
@@ -80,19 +115,65 @@ void AppWindow::remove_rule(const std::string& target) {
     }
 }
 
+void AppWindow::run_doctor_dialog(GtkWindow* parent) {
+    DoctorReport report = run_diagnostics();
+    std::ostringstream ss;
+    ss << "OS: " << report.os_version << "\n"
+       << "Desktop: " << report.desktop << "\n"
+       << "Session: " << report.session_type << "\n"
+       << "Mutter: " << report.mutter_version << "\n"
+       << "Portal: " << report.portal_version << "\n"
+       << "PipeWire: " << report.pipewire_version << "\n"
+       << "WirePlumber: " << report.wireplumber_version << "\n"
+       << "GPU: " << report.gpu_info << "\n"
+       << "EGL: " << report.egl_details << "\n"
+       << "GStreamer: " << report.gstreamer_version;
+
+    GtkWidget* dialog = adw_message_dialog_new(parent, "WayBlur Doctor Report", ss.str().c_str());
+    adw_message_dialog_add_response(ADW_MESSAGE_DIALOG(dialog), "ok", "Close");
+    gtk_window_present(GTK_WINDOW(dialog));
+}
+
+void AppWindow::run_testmode_dialog(GtkWindow* parent) {
+    TestMode test_mode;
+    TestModeResult res = test_mode.run_test();
+
+    GtkWidget* dialog = adw_message_dialog_new(parent, res.passed ? "Test Mode: PASSED" : "Test Mode: FAILED", res.summary.c_str());
+    adw_message_dialog_add_response(ADW_MESSAGE_DIALOG(dialog), "ok", "Close");
+    gtk_window_present(GTK_WINDOW(dialog));
+}
+
+void AppWindow::run_benchmark_dialog(GtkWindow* parent) {
+    Benchmark bm;
+    auto reports = bm.run_benchmark();
+    std::ostringstream ss;
+    for (const auto& r : reports) {
+        ss << r.resolution << " @ " << r.fps << " FPS:\n"
+           << "  Capture Latency: " << r.capture_latency_ms << " ms\n"
+           << "  Process Latency: " << r.processing_latency_ms << " ms\n"
+           << "  Dropped Frames: " << r.dropped_frames << "\n"
+           << "  CPU Usage: " << r.cpu_utilization << "\n"
+           << "  GPU Usage: " << r.gpu_utilization << "\n\n";
+    }
+
+    GtkWidget* dialog = adw_message_dialog_new(parent, "Performance Benchmark Results", ss.str().c_str());
+    adw_message_dialog_add_response(ADW_MESSAGE_DIALOG(dialog), "ok", "Close");
+    gtk_window_present(GTK_WINDOW(dialog));
+}
+
 void AppWindow::build_ui(GtkApplication* app) {
     policy_.load_config();
 
     GtkWidget* window = adw_application_window_new(app);
     gtk_window_set_title(GTK_WINDOW(window), "WayBlur — Privacy Protection");
-    gtk_window_set_default_size(GTK_WINDOW(window), 540, 720);
+    gtk_window_set_default_size(GTK_WINDOW(window), 560, 760);
 
     GtkWidget* header_bar = adw_header_bar_new();
     GtkWidget* box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_box_append(GTK_BOX(box), header_bar);
 
     GtkWidget* clamp = adw_clamp_new();
-    adw_clamp_set_maximum_size(ADW_CLAMP(clamp), 500);
+    adw_clamp_set_maximum_size(ADW_CLAMP(clamp), 520);
     gtk_box_append(GTK_BOX(box), clamp);
 
     GtkWidget* scroll = gtk_scrolled_window_new();
@@ -107,12 +188,36 @@ void AppWindow::build_ui(GtkApplication* app) {
     gtk_widget_set_margin_bottom(content_box, 16);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), content_box);
 
-    // Status Card
-    GtkWidget* status_page = adw_status_page_new();
-    adw_status_page_set_title(ADW_STATUS_PAGE(status_page), "Screen Sharing Protection");
-    adw_status_page_set_description(ADW_STATUS_PAGE(status_page), "Status: ● Protected | Screen sharing: Active");
-    adw_status_page_set_icon_name(ADW_STATUS_PAGE(status_page), "security-high-symbolic");
-    gtk_box_append(GTK_BOX(content_box), status_page);
+    // Status Card & Protection Toggle
+    status_page_ = adw_status_page_new();
+    adw_status_page_set_title(ADW_STATUS_PAGE(status_page_), "Protection Inactive");
+    adw_status_page_set_description(ADW_STATUS_PAGE(status_page_), "Status: ○ IDLE | Toggle switch to start protection");
+    adw_status_page_set_icon_name(ADW_STATUS_PAGE(status_page_), "security-medium-symbolic");
+    gtk_box_append(GTK_BOX(content_box), status_page_);
+
+    GtkWidget* toggle_group = adw_preferences_group_new();
+    gtk_box_append(GTK_BOX(content_box), toggle_group);
+
+    GtkWidget* toggle_row = adw_action_row_new();
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(toggle_row), "Active Screen-Share Protection");
+    adw_action_row_set_subtitle(ADW_ACTION_ROW(toggle_row), "Automatically mask protected windows & DNS domains");
+
+    status_switch_ = gtk_switch_new();
+    gtk_switch_set_active(GTK_SWITCH(status_switch_), FALSE);
+    gtk_widget_set_valign(status_switch_, GTK_ALIGN_CENTER);
+    adw_action_row_add_suffix(ADW_ACTION_ROW(toggle_row), status_switch_);
+    adw_preferences_group_add(ADW_PREFERENCES_GROUP(toggle_group), toggle_row);
+
+    g_signal_connect_data(status_switch_, "notify::active", G_CALLBACK((GCallback)+[](GObject* sw, GParamSpec*, gpointer user_data) {
+        auto* self = static_cast<AppWindow*>(user_data);
+        if (!self) return;
+        gboolean active = gtk_switch_get_active(GTK_SWITCH(sw));
+        if (active) {
+            self->start_protection();
+        } else {
+            self->stop_protection();
+        }
+    }), this, nullptr, G_CONNECT_DEFAULT);
 
     // Add New Target Rule Section
     GtkWidget* add_group = adw_preferences_group_new();
@@ -120,8 +225,7 @@ void AppWindow::build_ui(GtkApplication* app) {
     gtk_box_append(GTK_BOX(content_box), add_group);
 
     target_entry_ = adw_entry_row_new();
-    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(target_entry_), "Target Name / DNS Domain");
-    adw_action_row_set_subtitle(ADW_ACTION_ROW(target_entry_), "e.g. slack, *.internal.net, keepassxc");
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(target_entry_), "Target Name / DNS Domain (e.g. outlook.office.com, slack)");
     adw_preferences_group_add(ADW_PREFERENCES_GROUP(add_group), target_entry_);
 
     const char* type_options[] = {"Application (App ID)", "DNS / Domain Name", nullptr};
@@ -142,7 +246,7 @@ void AppWindow::build_ui(GtkApplication* app) {
     gtk_widget_set_margin_top(btn_add, 8);
     adw_preferences_group_add(ADW_PREFERENCES_GROUP(add_group), btn_add);
 
-    g_signal_connect_data(btn_add, "clicked", G_CALLBACK(+[](GtkButton*, gpointer user_data) {
+    g_signal_connect_data(btn_add, "clicked", G_CALLBACK((GCallback)+[](GtkButton*, gpointer user_data) {
         auto* self = static_cast<AppWindow*>(user_data);
         if (!self) return;
 
@@ -159,25 +263,49 @@ void AppWindow::build_ui(GtkApplication* app) {
         gtk_editable_set_text(GTK_EDITABLE(self->target_entry_), "");
     }), this, nullptr, G_CONNECT_DEFAULT);
 
-    // Protected Applications List
+    // Active Protection Targets List
     pref_group_ = adw_preferences_group_new();
     adw_preferences_group_set_title(ADW_PREFERENCES_GROUP(pref_group_), "Active Protection Targets");
     gtk_box_append(GTK_BOX(content_box), pref_group_);
 
     populate_rules_list();
 
-    // Default Action & Strength Settings
-    GtkWidget* settings_group = adw_preferences_group_new();
-    adw_preferences_group_set_title(ADW_PREFERENCES_GROUP(settings_group), "Global Settings");
-    gtk_box_append(GTK_BOX(content_box), settings_group);
+    // Tools & Diagnostics Group (Doctor, Test, Benchmark parity)
+    GtkWidget* tools_group = adw_preferences_group_new();
+    adw_preferences_group_set_title(ADW_PREFERENCES_GROUP(tools_group), "Diagnostics & Performance Profiling");
+    gtk_box_append(GTK_BOX(content_box), tools_group);
 
-    GtkWidget* scale_row = adw_action_row_new();
-    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(scale_row), "Blur strength");
-    GtkWidget* scale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 5, 50, 5);
-    gtk_range_set_value(GTK_RANGE(scale), 30);
-    gtk_widget_set_hexpand(scale, TRUE);
-    adw_action_row_add_suffix(ADW_ACTION_ROW(scale_row), scale);
-    adw_preferences_group_add(ADW_PREFERENCES_GROUP(settings_group), scale_row);
+    GtkWidget* tools_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    gtk_widget_set_margin_top(tools_box, 4);
+
+    GtkWidget* btn_doc = gtk_button_new_with_label("Run Doctor Check");
+    gtk_widget_set_hexpand(btn_doc, TRUE);
+    auto* doc_ctx = new DialogContext{this, GTK_WINDOW(window)};
+    g_signal_connect_data(btn_doc, "clicked", G_CALLBACK((GCallback)+[](GtkButton*, gpointer user_data) {
+        auto* c = static_cast<DialogContext*>(user_data);
+        if (c && c->window) c->window->run_doctor_dialog(c->parent);
+    }), doc_ctx, nullptr, G_CONNECT_DEFAULT);
+
+    GtkWidget* btn_test = gtk_button_new_with_label("Run Test Mode");
+    gtk_widget_set_hexpand(btn_test, TRUE);
+    auto* test_ctx = new DialogContext{this, GTK_WINDOW(window)};
+    g_signal_connect_data(btn_test, "clicked", G_CALLBACK((GCallback)+[](GtkButton*, gpointer user_data) {
+        auto* c = static_cast<DialogContext*>(user_data);
+        if (c && c->window) c->window->run_testmode_dialog(c->parent);
+    }), test_ctx, nullptr, G_CONNECT_DEFAULT);
+
+    GtkWidget* btn_bench = gtk_button_new_with_label("Run Benchmark");
+    gtk_widget_set_hexpand(btn_bench, TRUE);
+    auto* bench_ctx = new DialogContext{this, GTK_WINDOW(window)};
+    g_signal_connect_data(btn_bench, "clicked", G_CALLBACK((GCallback)+[](GtkButton*, gpointer user_data) {
+        auto* c = static_cast<DialogContext*>(user_data);
+        if (c && c->window) c->window->run_benchmark_dialog(c->parent);
+    }), bench_ctx, nullptr, G_CONNECT_DEFAULT);
+
+    gtk_box_append(GTK_BOX(tools_box), btn_doc);
+    gtk_box_append(GTK_BOX(tools_box), btn_test);
+    gtk_box_append(GTK_BOX(tools_box), btn_bench);
+    adw_preferences_group_add(ADW_PREFERENCES_GROUP(tools_group), tools_box);
 
     adw_application_window_set_content(ADW_APPLICATION_WINDOW(window), box);
     gtk_window_present(GTK_WINDOW(window));

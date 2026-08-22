@@ -28,7 +28,7 @@ std::vector<FilterRule> WindowTracker::generate_filter_rules(const PrivacyPolicy
     windows.insert(windows.end(), synthetic_windows_.begin(), synthetic_windows_.end());
 
     for (const auto& win : windows) {
-        AppPolicy app_pol = policy.get_policy_for_app(win.app_id);
+        AppPolicy app_pol = policy.get_policy_for_app(win.app_id, win.title);
         if (app_pol.action != ActionType::Allow) {
             FilterRule rule;
             rule.app_id = win.app_id;
