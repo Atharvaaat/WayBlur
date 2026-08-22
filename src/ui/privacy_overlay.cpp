@@ -67,9 +67,16 @@ void PrivacyOverlay::show() {
     if (window_) return;
 
     window_ = gtk_window_new();
-    gtk_window_set_title(GTK_WINDOW(window_), "WayBlur Privacy Overlay");
     gtk_window_set_decorated(GTK_WINDOW(window_), FALSE);
     gtk_window_set_resizable(GTK_WINDOW(window_), FALSE);
+
+    // Make window background transparent
+    GtkCssProvider* css = gtk_css_provider_new();
+    gtk_css_provider_load_from_string(css, "window { background: rgba(0,0,0,0); }");
+    GtkStyleContext* ctx = gtk_widget_get_style_context(window_);
+    gtk_style_context_add_provider(ctx, GTK_STYLE_PROVIDER(css), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    g_object_unref(css);
+
     gtk_window_fullscreen(GTK_WINDOW(window_));
     gtk_window_maximize(GTK_WINDOW(window_));
 
