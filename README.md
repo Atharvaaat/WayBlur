@@ -100,6 +100,13 @@ ninja -C build
 ```bash
 ./build/wayblur test
 ```
+*Note: `test` mode validates the offline frame manipulation algorithm in memory. To apply live privacy masking during Google Meet, Zoom, or Discord calls, run active protection below.*
+
+### 5. Google Meet / WebRTC Screen Sharing Setup
+When initiating screen sharing in Google Meet, Chrome requests a stream from the Wayland XDG Desktop Portal:
+1. Launch WayBlur active protection: `./build/wayblur protect` (or toggle **Active Protection** in `./build/wayblur gui`).
+2. In Google Meet / Chrome screen share dialog, select the **WayBlur Privacy Screen** PipeWire stream.
+3. Google Meet receives the PipeWire stream with all configured applications and domains (e.g., `google-chrome`, `outlook.office.com`) masked in real time!
 
 ### 5. Profile Performance & Latency
 ```bash

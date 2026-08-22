@@ -6,6 +6,7 @@
 #include <fstream>
 #include <cstdlib>
 #include <vector>
+#include <regex>
 
 namespace wayblur {
 
@@ -15,54 +16,55 @@ std::vector<SurfaceWindowInfo> parse_window_json(const std::string& json_str) {
     std::vector<SurfaceWindowInfo> windows;
     if (json_str.empty()) return windows;
 
-    size_t pos = 0;
-    while ((pos = json_str.find('{', pos)) != std::string::npos) {
-        size_t end = json_str.find('}', pos);
-        if (end == std::string::npos) break;
+    try {
+        // Regex to safely match JSON object properties
+        std::regex obj_regex(R"(\{([^{}]*)\})");
+        auto begin = std::sregex_iterator(json_str.begin(), json_str.end(), obj_regex);
+        auto end = std::sregex_iterator();
 
-        std::string obj = json_str.substr(pos, end - pos + 1);
-        pos = end + 1;
+        for (std::sregex_iterator i = begin; i != end; ++i) {
+            std::smatch match = *i;
+            std::string obj = match.str();
 
-        SurfaceWindowInfo win;
+            SurfaceWindowInfo win;
+            auto get_string = [&](const std::string& key) -> std::string {
+                std::regex key_regex("\"" + key + "\"\\s*:\\s*\"([^\"]*)\"");
+                std::smatch m;
+                if (std::regex_search(obj, m, key_regex) && m.size() > 1) {
+                    return m[1].str();
+                }
+                return "";
+            };
 
-        auto get_string = [&](const std::string& key) -> std::string {
-            size_t kpos = obj.find("\"" + key + "\"");
-            if (kpos == std::string::npos) return "";
-            size_t vstart = obj.find(':', kpos);
-            if (vstart == std::string::npos) return "";
-            size_t q1 = obj.find('"', vstart);
-            if (q1 == std::string::npos) return "";
-            size_t q2 = obj.find('"', q1 + 1);
-            if (q2 == std::string::npos) return "";
-            return obj.substr(q1 + 1, q2 - q1 - 1);
-        };
-
-        auto get_int = [&](const std::string& key) -> int {
-            size_t kpos = obj.find("\"" + key + "\"");
-            if (kpos == std::string::npos) return 0;
-            size_t vstart = obj.find(':', kpos);
-            if (vstart == std::string::npos) return 0;
-            size_t vval = obj.find_first_of("-0123456789", vstart);
-            if (vval == std::string::npos) return 0;
-            try {
-                return std::stoi(obj.substr(vval));
-            } catch (...) {
+            auto get_int = [&](const std::string& key) -> int {
+                std::regex key_regex("\"" + key + "\"\\s*:\\s*(-?\\d+)");
+                std::smatch m;
+                if (std::regex_search(obj, m, key_regex) && m.size() > 1) {
+                    try {
+                        return std::stoi(m[1].str());
+                    } catch (...) {
+                        return 0;
+                    }
+                }
                 return 0;
+            };
+
+            win.app_id = get_string("app_id");
+            win.title = get_string("title");
+            win.box.x = get_int("x");
+            win.box.y = get_int("y");
+            win.box.width = get_int("width");
+            win.box.height = get_int("height");
+            win.monitor = get_int("monitor");
+
+            if (!win.app_id.empty() || !win.title.empty()) {
+                windows.push_back(win);
             }
-        };
-
-        win.app_id = get_string("app_id");
-        win.title = get_string("title");
-        win.box.x = get_int("x");
-        win.box.y = get_int("y");
-        win.box.width = get_int("width");
-        win.box.height = get_int("height");
-        win.monitor = get_int("monitor");
-
-        if (!win.app_id.empty() || !win.title.empty()) {
-            windows.push_back(win);
         }
+    } catch (const std::exception& e) {
+        std::cerr << "[MutterIntegration] Exception parsing JSON: " << e.what() << "\n";
     }
+
     return windows;
 }
 
@@ -144,7 +146,6 @@ export default class WayBlurExtension extends Extension {
         fjs << ext_js;
         fjs.close();
 
-        // Enable extension via gnome-extensions command
         std::system("gnome-extensions enable wayblur@org.gnome.Shell.WayBlur >/dev/null 2>&1");
         return true;
     } catch (...) {
@@ -205,32 +206,6 @@ std::vector<SurfaceWindowInfo> MutterIntegration::fetch_surface_metadata() {
         g_variant_unref(res);
     } else {
         if (error) g_error_free(error);
-
-        // Fail-Closed Security Fallback:
-        // If extension D-Bus is starting up or unavailable, query active browser/app windows
-        FILE* fp = ::popen("pgrep -a chrome || pgrep -a firefox", "r");
-        if (fp) {
-            char buf[256];
-            while (::fgets(buf, sizeof(buf), fp)) {
-                std::string line(buf);
-                SurfaceWindowInfo win;
-                if (line.find("chrome") != std::string::npos) {
-                    win.app_id = "google-chrome";
-                    win.title = "google-chrome";
-                } else if (line.find("firefox") != std::string::npos) {
-                    win.app_id = "firefox";
-                    win.title = "firefox";
-                }
-                if (!win.app_id.empty()) {
-                    // Cover left half of screen where browser windows are placed
-                    win.box = {0, 0, 960, 1080};
-                    win.monitor = 0;
-                    result.push_back(win);
-                    break;
-                }
-            }
-            ::pclose(fp);
-        }
     }
 
     return result;
