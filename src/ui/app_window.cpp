@@ -23,11 +23,36 @@ AppWindow::~AppWindow() {
     stop_protection();
 }
 
+void AppWindow::update_protection_rules() {
+    if (!is_protecting_) return;
+
+    auto rules = window_tracker_.generate_filter_rules(policy_);
+    pipeline_.set_filter_rules(rules);
+}
+
 void AppWindow::start_protection() {
+    if (is_protecting_) return;
+
     is_protecting_ = true;
+    policy_.load_config();
+    window_tracker_.init();
     session_monitor_.start_monitoring();
+
     pipeline_.init();
     pipeline_.start();
+
+    // Initial rule generation
+    update_protection_rules();
+
+    // Schedule 100ms periodic rule updates
+    timer_id_ = g_timeout_add(100, [](gpointer user_data) -> gboolean {
+        auto* self = static_cast<AppWindow*>(user_data);
+        if (self && self->is_protecting_) {
+            self->update_protection_rules();
+            return G_SOURCE_CONTINUE;
+        }
+        return G_SOURCE_REMOVE;
+    }, this);
 
     if (status_page_) {
         adw_status_page_set_title(ADW_STATUS_PAGE(status_page_), "Privacy Protection Active");
@@ -37,7 +62,14 @@ void AppWindow::start_protection() {
 }
 
 void AppWindow::stop_protection() {
+    if (!is_protecting_) return;
+
     is_protecting_ = false;
+    if (timer_id_ > 0) {
+        g_source_remove(timer_id_);
+        timer_id_ = 0;
+    }
+
     pipeline_.stop();
     session_monitor_.stop_monitoring();
 
@@ -106,12 +138,14 @@ void AppWindow::add_new_rule(const std::string& target, const std::string& type,
     policy_.add_policy(pol);
     policy_.save_config();
     populate_rules_list();
+    update_protection_rules();
 }
 
 void AppWindow::remove_rule(const std::string& target) {
     if (policy_.remove_policy(target)) {
         policy_.save_config();
         populate_rules_list();
+        update_protection_rules();
     }
 }
 
@@ -200,7 +234,7 @@ void AppWindow::build_ui(GtkApplication* app) {
 
     GtkWidget* toggle_row = adw_action_row_new();
     adw_preferences_row_set_title(ADW_PREFERENCES_ROW(toggle_row), "Active Screen-Share Protection");
-    adw_action_row_set_subtitle(ADW_ACTION_ROW(toggle_row), "Automatically mask protected windows & DNS domains");
+    adw_action_row_set_subtitle(ADW_ACTION_ROW(toggle_row), "Automatically mask protected windows &amp; DNS domains");
 
     status_switch_ = gtk_switch_new();
     gtk_switch_set_active(GTK_SWITCH(status_switch_), FALSE);
@@ -272,7 +306,7 @@ void AppWindow::build_ui(GtkApplication* app) {
 
     // Tools & Diagnostics Group (Doctor, Test, Benchmark parity)
     GtkWidget* tools_group = adw_preferences_group_new();
-    adw_preferences_group_set_title(ADW_PREFERENCES_GROUP(tools_group), "Diagnostics & Performance Profiling");
+    adw_preferences_group_set_title(ADW_PREFERENCES_GROUP(tools_group), "Diagnostics and Performance Profiling");
     gtk_box_append(GTK_BOX(content_box), tools_group);
 
     GtkWidget* tools_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);

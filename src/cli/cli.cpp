@@ -2,6 +2,8 @@
 #include "core/doctor.hpp"
 #include "portal/screencast_manager.hpp"
 #include "policy/privacy_policy.hpp"
+#include "policy/window_tracker.hpp"
+#include "security/share_session_monitor.hpp"
 #include "pipewire/capture_pipeline.hpp"
 #include "cli/test_mode.hpp"
 #include "cli/benchmark.hpp"
@@ -10,10 +12,19 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <thread>
+#include <chrono>
+#include <csignal>
 
 namespace wayblur {
 
 namespace {
+
+std::atomic<bool> g_running{true};
+
+void handle_signal(int) {
+    g_running = false;
+}
 
 void print_usage() {
     std::cout << "WayBlur — Privacy-Aware Screen Sharing for GNOME / Wayland\n\n"
@@ -132,6 +143,32 @@ int run_cli(int argc, char* argv[]) {
                   << "ScreenCast Session: Monitoring active streams\n"
                   << "Fail-Closed Security: ACTIVE\n"
                   << "Press Ctrl+C to stop protection.\n";
+
+        std::signal(SIGINT, handle_signal);
+        std::signal(SIGTERM, handle_signal);
+
+        PrivacyPolicy policy;
+        policy.load_config();
+
+        WindowTracker tracker;
+        tracker.init();
+
+        ShareSessionMonitor monitor;
+        monitor.start_monitoring();
+
+        CapturePipeline pipeline;
+        pipeline.init();
+        pipeline.start();
+
+        while (g_running) {
+            auto rules = tracker.generate_filter_rules(policy);
+            pipeline.set_filter_rules(rules);
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+
+        pipeline.stop();
+        monitor.stop_monitoring();
+        std::cout << "\n[WayBlur] Protection stopped cleanly.\n";
         return 0;
     }
 

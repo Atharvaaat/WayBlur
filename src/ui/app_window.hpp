@@ -18,6 +18,7 @@ public:
 
     void start_protection();
     void stop_protection();
+    void update_protection_rules();
 
 private:
     static void on_activate(GtkApplication* app, gpointer user_data);
@@ -44,6 +45,7 @@ private:
     GtkWidget* action_combo_{nullptr};
 
     bool is_protecting_{false};
+    guint timer_id_{0};
 };
 
 } // namespace wayblur
