@@ -1,4 +1,5 @@
 #include "core/doctor.hpp"
+#include "gnome/mutter_integration.hpp"
 
 #include <gio/gio.h>
 #include <pipewire/pipewire.h>
@@ -32,7 +33,6 @@ std::string exec_cmd(const char* cmd) {
     while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
         result += buffer.data();
     }
-    // Trim trailing newlines/spaces
     while (!result.empty() && (result.back() == '\n' || result.back() == '\r' || result.back() == ' ')) {
         result.pop_back();
     }
@@ -77,7 +77,7 @@ void query_screencast_portal(DoctorReport& report) {
         g_variant_new("(s)", "org.freedesktop.portal.ScreenCast"),
         G_VARIANT_TYPE("(a{sv})"),
         G_DBUS_CALL_FLAGS_NONE,
-        1000, // 1 sec timeout
+        1000,
         nullptr,
         &error
     );
@@ -131,7 +131,6 @@ void check_egl(DoctorReport& report) {
         }
     }
 #endif
-    // Fallback: check dynamic loading of libEGL
     void* handle = dlopen("libEGL.so.1", RTLD_NOW | RTLD_LOCAL);
     if (!handle) {
         handle = dlopen("libEGL.so", RTLD_NOW | RTLD_LOCAL);
@@ -193,6 +192,10 @@ std::string format_cursor_modes(uint32_t flags) {
 
 DoctorReport run_diagnostics() {
     DoctorReport report;
+
+    // Ensure GNOME Extension is installed & Mutter D-Bus initialized
+    MutterIntegration mutter;
+    mutter.init();
 
     // OS Version
     report.os_version = get_os_version();

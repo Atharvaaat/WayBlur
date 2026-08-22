@@ -1,0 +1,7 @@
+{
+  "uuid": "wayblur@org.gnome.Shell.WayBlur",
+  "name": "WayBlur Privacy Metadata Provider",
+  "description": "Exposes window surface bounding boxes and app metadata for WayBlur privacy engine on Wayland.",
+  "shell-version": [ "45", "46", "47", "48", "49", "50" ],
+  "url": "https://github.com/Atharvaaat/WayBlur"
+}
