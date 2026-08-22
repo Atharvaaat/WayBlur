@@ -207,27 +207,39 @@ void AppWindow::build_ui(GtkApplication* app) {
     gtk_box_append(GTK_BOX(box), header_bar);
 
     GtkWidget* clamp = adw_clamp_new();
-    adw_clamp_set_maximum_size(ADW_CLAMP(clamp), 520);
-    gtk_box_append(GTK_BOX(box), clamp);
+    GtkWidget* main_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_box_append(GTK_BOX(box), main_box);
 
-    GtkWidget* scroll = gtk_scrolled_window_new();
-    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
-    gtk_widget_set_vexpand(scroll, TRUE);
-    adw_clamp_set_child(ADW_CLAMP(clamp), scroll);
-
-    GtkWidget* content_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
-    gtk_widget_set_margin_start(content_box, 16);
-    gtk_widget_set_margin_end(content_box, 16);
-    gtk_widget_set_margin_top(content_box, 16);
-    gtk_widget_set_margin_bottom(content_box, 16);
-    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), content_box);
-
-    // Status Card & Protection Toggle
+    // Fixed Top Status Area
     status_page_ = adw_status_page_new();
-    adw_status_page_set_title(ADW_STATUS_PAGE(status_page_), "Protection Inactive");
-    adw_status_page_set_description(ADW_STATUS_PAGE(status_page_), "Status: ○ IDLE | Toggle switch to start protection");
-    adw_status_page_set_icon_name(ADW_STATUS_PAGE(status_page_), "security-medium-symbolic");
-    gtk_box_append(GTK_BOX(content_box), status_page_);
+    adw_status_page_set_title(ADW_STATUS_PAGE(status_page_), "Privacy Protection Inactive");
+    adw_status_page_set_description(ADW_STATUS_PAGE(status_page_), "Status: ○ STANDBY | Safe to configure rules");
+    adw_status_page_set_icon_name(ADW_STATUS_PAGE(status_page_), "security-low-symbolic");
+    gtk_widget_set_margin_top(status_page_, 12);
+    gtk_widget_set_margin_bottom(status_page_, 12);
+    gtk_box_append(GTK_BOX(main_box), status_page_);
+
+    // Enable Extension Button
+    GtkWidget* ext_btn = gtk_button_new_with_label("Install & Enable GNOME Extension");
+    gtk_widget_set_margin_start(ext_btn, 32);
+    gtk_widget_set_margin_end(ext_btn, 32);
+    gtk_widget_set_margin_bottom(ext_btn, 12);
+    g_signal_connect(ext_btn, "clicked", G_CALLBACK(+[](GtkButton*, gpointer) {
+        system("gnome-extensions enable wayblur@org.gnome.Shell.WayBlur || true");
+    }), this);
+    gtk_box_append(GTK_BOX(main_box), ext_btn);
+
+    // Scrollable Configuration Area
+    GtkWidget* scrolled = gtk_scrolled_window_new();
+    gtk_widget_set_vexpand(scrolled, TRUE);
+    gtk_box_append(GTK_BOX(main_box), scrolled);
+
+    GtkWidget* content_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    gtk_widget_set_margin_start(content_box, 24);
+    gtk_widget_set_margin_end(content_box, 24);
+    gtk_widget_set_margin_top(content_box, 12);
+    gtk_widget_set_margin_bottom(content_box, 24);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), content_box);
 
     GtkWidget* toggle_group = adw_preferences_group_new();
     gtk_box_append(GTK_BOX(content_box), toggle_group);
