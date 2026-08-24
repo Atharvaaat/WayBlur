@@ -140,7 +140,6 @@ int run_cli(int argc, char* argv[]) {
                   << "      WayBlur Privacy Protection        \n"
                   << "========================================\n"
                   << "Status: ACTIVE & PROTECTING\n"
-                  << "ScreenCast Session: Monitoring active streams\n"
                   << "Fail-Closed Security: ACTIVE\n"
                   << "Press Ctrl+C to stop protection.\n";
 
@@ -156,18 +155,42 @@ int run_cli(int argc, char* argv[]) {
         ShareSessionMonitor monitor;
         monitor.start_monitoring();
 
+        // Establish ScreenCast portal session for PipeWire stream
+        ScreenCastManager portal;
+        int pw_fd = -1;
+        uint32_t node_id = 0;
+        if (portal.init_dbus() && portal.create_session()) {
+            portal.select_sources(SourceType::Monitor, CursorMode::Embedded);
+            if (portal.start_session()) {
+                pw_fd = portal.open_pipewire_remote();
+                if (!portal.streams().empty()) {
+                    node_id = portal.streams()[0].node_id;
+                }
+            }
+            std::cout << "[WayBlur] ScreenCast session: " << portal.session_handle() << "\n";
+        } else {
+            std::cerr << "[WayBlur] Warning: Could not establish ScreenCast portal session.\n";
+        }
+
         CapturePipeline pipeline;
-        pipeline.init();
+        pipeline.init(pw_fd, node_id);
         pipeline.start();
+
+        std::cout << "[WayBlur] Protection loop active. Monitoring windows...\n";
 
         while (g_running) {
             auto rules = tracker.generate_filter_rules(policy);
             pipeline.set_filter_rules(rules);
+            // Send compositor-level privacy masks to GNOME Shell extension
+            tracker.get_mutter().send_privacy_masks(rules);
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
 
         pipeline.stop();
         monitor.stop_monitoring();
+        // Clear compositor masks on exit
+        std::vector<FilterRule> empty_rules;
+        tracker.get_mutter().send_privacy_masks(empty_rules);
         std::cout << "\n[WayBlur] Protection stopped cleanly.\n";
         return 0;
     }

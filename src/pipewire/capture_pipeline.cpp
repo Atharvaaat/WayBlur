@@ -32,6 +32,7 @@ bool CapturePipeline::init(int pipewire_fd, uint32_t node_id) {
     static const struct pw_stream_events stream_events = {
         .version = PW_VERSION_STREAM_EVENTS,
         .state_changed = on_state_changed,
+        .param_changed = on_param_changed,
         .process = on_process,
     };
 
@@ -154,6 +155,19 @@ PipelineStats CapturePipeline::get_stats() const {
     return stats;
 }
 
+void CapturePipeline::on_param_changed(void* data, uint32_t id, const struct spa_pod* param) {
+    auto* self = static_cast<CapturePipeline*>(data);
+    if (!self || !param || id != SPA_PARAM_Format) return;
+
+    struct spa_video_info_raw info;
+    if (spa_format_video_raw_parse(param, &info) >= 0) {
+        self->frame_width_ = info.size.width;
+        self->frame_height_ = info.size.height;
+        std::cout << "[WayBlur] Stream format negotiated: "
+                  << self->frame_width_ << "x" << self->frame_height_ << "\n";
+    }
+}
+
 void CapturePipeline::on_process(void* data) {
     auto* self = static_cast<CapturePipeline*>(data);
     if (!self || !self->stream_) return;
@@ -163,11 +177,20 @@ void CapturePipeline::on_process(void* data) {
 
     struct spa_buffer* buf_in = b_in->buffer;
     if (buf_in->datas[0].data) {
+        int width = self->frame_width_;
+        int height = self->frame_height_;
+        int stride = width * 4;
+
+        // Use chunk stride if available
+        if (buf_in->datas[0].chunk && buf_in->datas[0].chunk->stride > 0) {
+            stride = buf_in->datas[0].chunk->stride;
+        }
+
         FrameBuffer frame;
         frame.data = static_cast<uint8_t*>(buf_in->datas[0].data);
-        frame.width = 1920;
-        frame.height = 1080;
-        frame.stride = 1920 * 4;
+        frame.width = width;
+        frame.height = height;
+        frame.stride = stride;
         frame.format = "RGBA";
 
         self->process_frame(frame);
@@ -178,13 +201,13 @@ void CapturePipeline::on_process(void* data) {
                 struct spa_buffer* buf_out = b_out->buffer;
                 if (buf_out->datas[0].data) {
                     uint32_t size = buf_in->datas[0].chunk->size;
-                    if (size == 0) size = 1920 * 1080 * 4;
+                    if (size == 0) size = static_cast<uint32_t>(height * stride);
                     memcpy(buf_out->datas[0].data, buf_in->datas[0].data, size);
-                    
+
                     buf_out->datas[0].chunk->offset = 0;
                     buf_out->datas[0].chunk->size = size;
-                    buf_out->datas[0].chunk->stride = 1920 * 4;
-                    
+                    buf_out->datas[0].chunk->stride = stride;
+
                     pw_stream_queue_buffer(self->stream_out_, b_out);
                 }
             }

@@ -51,8 +51,11 @@ private:
     std::atomic<uint64_t> frames_processed_{0};
     std::atomic<uint64_t> frames_dropped_{0};
     std::chrono::steady_clock::time_point start_time_;
+    int frame_width_{1920};
+    int frame_height_{1080};
 
     static void on_process(void* data);
+    static void on_param_changed(void* data, uint32_t id, const struct spa_pod* param);
     static void on_state_changed(void* data, enum pw_stream_state old_state, enum pw_stream_state new_state, const char* error);
 };
 

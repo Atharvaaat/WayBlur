@@ -39,7 +39,20 @@ void AppWindow::start_protection() {
     window_tracker_.init();
     session_monitor_.start_monitoring();
 
-    pipeline_.init();
+    // Establish ScreenCast portal session for PipeWire stream
+    int pw_fd = -1;
+    uint32_t node_id = 0;
+    if (portal_mgr_.init_dbus() && portal_mgr_.create_session()) {
+        portal_mgr_.select_sources(SourceType::Monitor, CursorMode::Embedded);
+        if (portal_mgr_.start_session()) {
+            pw_fd = portal_mgr_.open_pipewire_remote();
+            if (!portal_mgr_.streams().empty()) {
+                node_id = portal_mgr_.streams()[0].node_id;
+            }
+        }
+    }
+
+    pipeline_.init(pw_fd, node_id);
     pipeline_.start();
 
     // Initial rule generation

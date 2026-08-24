@@ -38,6 +38,7 @@ private:
     ShareSessionMonitor session_monitor_;
     CapturePipeline pipeline_;
     WindowTracker window_tracker_;
+    ScreenCastManager portal_mgr_;
 
     GtkWidget* status_page_{nullptr};
     GtkWidget* status_switch_{nullptr};

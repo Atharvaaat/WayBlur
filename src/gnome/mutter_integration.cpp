@@ -235,7 +235,7 @@ std::vector<SurfaceWindowInfo> MutterIntegration::fetch_surface_metadata() {
     GError* error = nullptr;
     GVariant* res = g_dbus_connection_call_sync(
         conn_,
-        "org.gnome.Shell.WayBlur",
+        "org.gnome.Shell",
         "/org/gnome/Shell/WayBlur",
         "org.gnome.Shell.WayBlur",
         "GetWindowMetadata",
@@ -255,7 +255,10 @@ std::vector<SurfaceWindowInfo> MutterIntegration::fetch_surface_metadata() {
         }
         g_variant_unref(res);
     } else {
-        if (error) g_error_free(error);
+        if (error) {
+            std::cerr << "[MutterIntegration] GetWindowMetadata D-Bus call failed: " << error->message << "\n";
+            g_error_free(error);
+        }
     }
 
     return result;
