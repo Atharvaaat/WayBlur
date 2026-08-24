@@ -48,6 +48,7 @@ private:
     GtkWidget* action_combo_{nullptr};
 
     bool is_protecting_{false};
+    bool pipeline_active_{false};
     guint timer_id_{0};
 };
 

@@ -17,7 +17,6 @@ std::vector<SurfaceWindowInfo> parse_window_json(const std::string& json_str) {
     if (json_str.empty()) return windows;
 
     try {
-        // Regex to safely match JSON object properties
         std::regex obj_regex(R"(\{([^{}]*)\})");
         auto begin = std::sregex_iterator(json_str.begin(), json_str.end(), obj_regex);
         auto end = std::sregex_iterator();
@@ -40,11 +39,7 @@ std::vector<SurfaceWindowInfo> parse_window_json(const std::string& json_str) {
                 std::regex key_regex("\"" + key + "\"\\s*:\\s*(-?\\d+)");
                 std::smatch m;
                 if (std::regex_search(obj, m, key_regex) && m.size() > 1) {
-                    try {
-                        return std::stoi(m[1].str());
-                    } catch (...) {
-                        return 0;
-                    }
+                    try { return std::stoi(m[1].str()); } catch (...) { return 0; }
                 }
                 return 0;
             };
@@ -62,33 +57,19 @@ std::vector<SurfaceWindowInfo> parse_window_json(const std::string& json_str) {
             }
         }
     } catch (const std::exception& e) {
-        std::cerr << "[MutterIntegration] Exception parsing JSON: " << e.what() << "\n";
+        std::cerr << "[WayBlur:Mutter] Exception parsing JSON: " << e.what() << "\n";
     }
 
     return windows;
 }
 
-bool install_gnome_extension() {
-    const char* home = std::getenv("HOME");
-    if (!home) return false;
-
-    std::filesystem::path ext_dir = std::string(home) + "/.local/share/gnome-shell/extensions/wayblur@org.gnome.Shell.WayBlur";
-    try {
-        std::filesystem::create_directories(ext_dir);
-
-        std::string meta_json = R"({
-  "uuid": "wayblur@org.gnome.Shell.WayBlur",
-  "name": "WayBlur Privacy Metadata Provider",
-  "description": "Exposes window surface bounding boxes and app metadata for WayBlur privacy engine on Wayland.",
-  "shell-version": [ "45", "46", "47", "48", "49", "50" ],
-  "url": "https://github.com/Atharvaaat/WayBlur"
-})";
-
-        std::string ext_js = R"(/* WayBlur GNOME Shell Extension */
+// The extension JS source embeds per-window masking logic
+static const char* EXTENSION_JS = R"EXTJS(/* WayBlur GNOME Shell Extension — Per-Window Privacy Masks */
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import Gio from 'gi://Gio';
 import St from 'gi://St';
+import Clutter from 'gi://Clutter';
 
 const WayBlurDBusInterface = `
 <node>
@@ -106,7 +87,8 @@ export default class WayBlurExtension extends Extension {
     enable() {
         this._dbusImpl = Gio.DBusExportedObject.wrapJSObject(WayBlurDBusInterface, this);
         this._dbusImpl.export(Gio.DBus.session, '/org/gnome/Shell/WayBlur');
-        this._maskActors = [];
+        this._maskedWindows = [];
+        console.log('[WayBlur] Extension enabled — per-window masking active');
     }
 
     disable() {
@@ -115,49 +97,77 @@ export default class WayBlurExtension extends Extension {
             this._dbusImpl.unexport();
             this._dbusImpl = null;
         }
+        console.log('[WayBlur] Extension disabled');
     }
 
     _clearMasks() {
-        if (this._maskActors) {
-            for (let actor of this._maskActors) {
-                if (actor.get_parent()) {
-                    actor.get_parent().remove_child(actor);
-                }
-                actor.destroy();
+        if (this._maskedWindows) {
+            for (let item of this._maskedWindows) {
+                try {
+                    if (item.overlay && item.overlay.get_parent()) {
+                        item.overlay.get_parent().remove_child(item.overlay);
+                    }
+                    if (item.overlay) item.overlay.destroy();
+                } catch (e) { /* window may already be destroyed */ }
             }
-            this._maskActors = [];
+            this._maskedWindows = [];
         }
+    }
+
+    _findWindowActorByRect(x, y, width, height) {
+        let actors = global.get_window_actors();
+        for (let actor of actors) {
+            let metaWin = actor.get_meta_window();
+            if (!metaWin) continue;
+            let rect = metaWin.get_frame_rect();
+            if (rect.x === x && rect.y === y &&
+                rect.width === width && rect.height === height) {
+                return actor;
+            }
+        }
+        return null;
     }
 
     SetPrivacyMasks(json_masks) {
         this._clearMasks();
         try {
             let masks = JSON.parse(json_masks);
-            for (let m of masks) {
-                let color = m.type === 'solid' ? 'rgba(15, 15, 20, 0.98)' : 'rgba(30, 35, 50, 0.95)';
-                let labelText = m.type === 'solid' ? 'SOLID MASK' : 'BLUR MASK';
-                
-                let container = new St.BoxLayout({
-                    style: `background-color: ${color}; border: 2px solid rgba(80, 100, 180, 0.8); border-radius: 8px;`,
-                    x: m.x,
-                    y: m.y,
-                    width: m.width,
-                    height: m.height,
-                    reactive: false // Click-through
-                });
-                
-                // Add Privacy Badge
-                let badge = new St.Label({
-                    text: `🔒 WAYBLUR PROTECTED (${labelText})`,
-                    style: 'color: white; font-weight: bold; font-size: 14px; margin: 24px;'
-                });
-                container.add_child(badge);
+            if (masks.length === 0) return;
 
-                Main.layoutManager.uiGroup.add_child(container);
-                this._maskActors.push(container);
+            for (let m of masks) {
+                let windowActor = this._findWindowActorByRect(m.x, m.y, m.width, m.height);
+                if (!windowActor) {
+                    console.log(`[WayBlur] No window actor for ${m.app_id} at (${m.x},${m.y},${m.width},${m.height})`);
+                    continue;
+                }
+
+                let color = m.type === 'solid'
+                    ? 'rgba(15, 15, 20, 0.98)'
+                    : 'rgba(25, 30, 45, 0.92)';
+                let labelText = m.type === 'solid' ? 'SOLID MASK' : 'PRIVACY BLUR';
+
+                let overlay = new St.BoxLayout({
+                    style: `background-color: ${color}; border-radius: 6px;`,
+                    x: 0, y: 0,
+                    width: windowActor.width,
+                    height: windowActor.height,
+                    reactive: false,
+                    x_expand: true, y_expand: true,
+                });
+
+                let badge = new St.Label({
+                    text: `\u{1F512} WAYBLUR PROTECTED \u2014 ${labelText}`,
+                    style: 'color: rgba(200,210,240,0.9); font-weight: bold; font-size: 13px; margin: 20px;',
+                });
+                overlay.add_child(badge);
+
+                // Attach directly to window actor (per-window, respects z-order)
+                windowActor.add_child(overlay);
+                this._maskedWindows.push({ actor: windowActor, overlay: overlay });
+                console.log(`[WayBlur] Masked: ${m.app_id} (${m.type}) at (${m.x},${m.y})`);
             }
         } catch (e) {
-            console.error('[WayBlur] Error parsing masks:', e);
+            console.error('[WayBlur] Error applying masks:', e);
         }
     }
 
@@ -175,30 +185,46 @@ export default class WayBlurExtension extends Extension {
             windows.push({
                 app_id: appId.toLowerCase(),
                 title: metaWin.get_title() || '',
-                x: rect.x,
-                y: rect.y,
-                width: rect.width,
-                height: rect.height,
+                x: rect.x, y: rect.y,
+                width: rect.width, height: rect.height,
                 monitor: metaWin.get_monitor()
             });
         }
-
         return JSON.stringify(windows);
     }
 }
-)";
+)EXTJS";
+
+static const char* METADATA_JSON = R"META({
+  "uuid": "wayblur@org.gnome.Shell.WayBlur",
+  "name": "WayBlur Privacy Metadata Provider",
+  "description": "Exposes window surface bounding boxes and app metadata for WayBlur privacy engine on Wayland.",
+  "shell-version": [ "45", "46", "47", "48", "49", "50" ],
+  "url": "https://github.com/Atharvaaat/WayBlur"
+})META";
+
+bool install_gnome_extension() {
+    const char* home = std::getenv("HOME");
+    if (!home) return false;
+
+    std::filesystem::path ext_dir = std::string(home) +
+        "/.local/share/gnome-shell/extensions/wayblur@org.gnome.Shell.WayBlur";
+    try {
+        std::filesystem::create_directories(ext_dir);
 
         std::ofstream fmeta(ext_dir / "metadata.json");
-        fmeta << meta_json;
+        fmeta << METADATA_JSON;
         fmeta.close();
 
         std::ofstream fjs(ext_dir / "extension.js");
-        fjs << ext_js;
+        fjs << EXTENSION_JS;
         fjs.close();
 
+        std::cout << "[WayBlur:Mutter] GNOME extension installed to " << ext_dir.string() << "\n";
         std::system("gnome-extensions enable wayblur@org.gnome.Shell.WayBlur >/dev/null 2>&1");
         return true;
-    } catch (...) {
+    } catch (const std::exception& e) {
+        std::cerr << "[WayBlur:Mutter] Error installing extension: " << e.what() << "\n";
         return false;
     }
 }
@@ -215,16 +241,23 @@ MutterIntegration::~MutterIntegration() {
 }
 
 bool MutterIntegration::init() {
+    std::cout << "[WayBlur:Mutter] Installing/updating GNOME Shell extension...\n";
     install_gnome_extension();
 
     GError* error = nullptr;
     conn_ = g_bus_get_sync(G_BUS_TYPE_SESSION, nullptr, &error);
     if (!conn_) {
-        if (error) g_error_free(error);
+        std::cerr << "[WayBlur:Mutter] Failed to connect to D-Bus session bus";
+        if (error) {
+            std::cerr << ": " << error->message;
+            g_error_free(error);
+        }
+        std::cerr << "\n";
         available_ = false;
         return false;
     }
     available_ = true;
+    std::cout << "[WayBlur:Mutter] D-Bus session bus connected\n";
     return true;
 }
 
@@ -252,11 +285,12 @@ std::vector<SurfaceWindowInfo> MutterIntegration::fetch_surface_metadata() {
         g_variant_get(res, "(s)", &json_str);
         if (json_str) {
             result = parse_window_json(std::string(json_str));
+            std::cout << "[WayBlur:Mutter] Fetched " << result.size() << " window(s) from compositor\n";
         }
         g_variant_unref(res);
     } else {
         if (error) {
-            std::cerr << "[MutterIntegration] GetWindowMetadata D-Bus call failed: " << error->message << "\n";
+            std::cerr << "[WayBlur:Mutter] GetWindowMetadata failed: " << error->message << "\n";
             g_error_free(error);
         }
     }
@@ -270,10 +304,12 @@ void MutterIntegration::send_privacy_masks(const std::vector<FilterRule>& rules)
     std::stringstream ss;
     ss << "[";
     bool first = true;
+    int mask_count = 0;
     for (const auto& rule : rules) {
         if (rule.action == ActionType::Allow) continue;
         if (!first) ss << ",";
         ss << "{";
+        ss << "\"app_id\":\"" << rule.app_id << "\",";
         ss << "\"x\":" << rule.box.x << ",";
         ss << "\"y\":" << rule.box.y << ",";
         ss << "\"width\":" << rule.box.width << ",";
@@ -281,8 +317,13 @@ void MutterIntegration::send_privacy_masks(const std::vector<FilterRule>& rules)
         ss << "\"type\":\"" << (rule.action == ActionType::Solid ? "solid" : "blur") << "\"";
         ss << "}";
         first = false;
+        mask_count++;
     }
     ss << "]";
+
+    if (mask_count > 0) {
+        std::cout << "[WayBlur:Mutter] Sending " << mask_count << " privacy mask(s) to compositor\n";
+    }
 
     GVariant* params = g_variant_new("(s)", ss.str().c_str());
     g_dbus_connection_call(

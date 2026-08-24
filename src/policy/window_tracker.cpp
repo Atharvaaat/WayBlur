@@ -1,5 +1,7 @@
 #include "policy/window_tracker.hpp"
 
+#include <iostream>
+
 namespace wayblur {
 
 WindowTracker::WindowTracker() = default;
@@ -38,7 +40,18 @@ std::vector<FilterRule> WindowTracker::generate_filter_rules(const PrivacyPolicy
             rule.block_size = app_pol.block_size;
             rule.box = win.box;
             rules.push_back(rule);
+            std::cout << "[WayBlur:Tracker] Match: '" << win.app_id
+                      << "' (title: '" << win.title.substr(0, 40)
+                      << "') -> " << (app_pol.action == ActionType::Solid ? "SOLID" :
+                                      app_pol.action == ActionType::Blur ? "BLUR" : "PIXELATE")
+                      << " at (" << win.box.x << "," << win.box.y
+                      << "," << win.box.width << "," << win.box.height << ")\n";
         }
+    }
+
+    if (!rules.empty()) {
+        std::cout << "[WayBlur:Tracker] Generated " << rules.size()
+                  << " filter rule(s) from " << windows.size() << " window(s)\n";
     }
 
     return rules;

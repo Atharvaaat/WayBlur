@@ -27,21 +27,32 @@ void AppWindow::update_protection_rules() {
     if (!is_protecting_) return;
 
     auto rules = window_tracker_.generate_filter_rules(policy_);
-    pipeline_.set_filter_rules(rules);
+    if (pipeline_active_) {
+        pipeline_.set_filter_rules(rules);
+    }
     window_tracker_.get_mutter().send_privacy_masks(rules);
 }
 
 void AppWindow::start_protection() {
     if (is_protecting_) return;
 
+    std::cout << "[WayBlur:GUI] Starting privacy protection...\n";
     is_protecting_ = true;
+
+    std::cout << "[WayBlur:GUI] Loading policy configuration...\n";
     policy_.load_config();
+    std::cout << "[WayBlur:GUI] Loaded " << policy_.policies().size() << " protection rule(s)\n";
+
+    std::cout << "[WayBlur:GUI] Initializing window tracker...\n";
     window_tracker_.init();
+
+    std::cout << "[WayBlur:GUI] Starting share session monitor...\n";
     session_monitor_.start_monitoring();
 
-    // Establish ScreenCast portal session for PipeWire stream
+    // Pipeline is optional — compositor masks are the primary protection
     int pw_fd = -1;
     uint32_t node_id = 0;
+    std::cout << "[WayBlur:GUI] Attempting ScreenCast portal session...\n";
     if (portal_mgr_.init_dbus() && portal_mgr_.create_session()) {
         portal_mgr_.select_sources(SourceType::Monitor, CursorMode::Embedded);
         if (portal_mgr_.start_session()) {
@@ -52,8 +63,13 @@ void AppWindow::start_protection() {
         }
     }
 
-    pipeline_.init(pw_fd, node_id);
-    pipeline_.start();
+    if (pw_fd >= 0 && pipeline_.init(pw_fd, node_id) && pipeline_.start()) {
+        pipeline_active_ = true;
+        std::cout << "[WayBlur:GUI] PipeWire capture pipeline started\n";
+    } else {
+        pipeline_active_ = false;
+        std::cout << "[WayBlur:GUI] PipeWire pipeline not available — using compositor-only protection\n";
+    }
 
     // Initial rule generation
     update_protection_rules();
@@ -68,6 +84,8 @@ void AppWindow::start_protection() {
         return G_SOURCE_REMOVE;
     }, this);
 
+    std::cout << "[WayBlur:GUI] ✓ Protection ACTIVE\n";
+
     if (status_page_) {
         adw_status_page_set_title(ADW_STATUS_PAGE(status_page_), "Privacy Protection Active");
         adw_status_page_set_description(ADW_STATUS_PAGE(status_page_), "Status: ● PROTECTING | Screen sharing streams masked");
@@ -78,23 +96,30 @@ void AppWindow::start_protection() {
 void AppWindow::stop_protection() {
     if (!is_protecting_) return;
 
+    std::cout << "[WayBlur:GUI] Stopping privacy protection...\n";
     is_protecting_ = false;
     if (timer_id_ > 0) {
         g_source_remove(timer_id_);
         timer_id_ = 0;
     }
 
-    pipeline_.stop();
+    if (pipeline_active_) {
+        pipeline_.stop();
+        pipeline_active_ = false;
+        std::cout << "[WayBlur:GUI] PipeWire pipeline stopped\n";
+    }
     session_monitor_.stop_monitoring();
 
     std::vector<FilterRule> empty_rules;
     window_tracker_.get_mutter().send_privacy_masks(empty_rules);
+    std::cout << "[WayBlur:GUI] Compositor masks cleared\n";
 
     if (status_page_) {
         adw_status_page_set_title(ADW_STATUS_PAGE(status_page_), "Protection Inactive");
         adw_status_page_set_description(ADW_STATUS_PAGE(status_page_), "Status: ○ IDLE | Toggle switch to start protection");
         adw_status_page_set_icon_name(ADW_STATUS_PAGE(status_page_), "security-medium-symbolic");
     }
+    std::cout << "[WayBlur:GUI] Protection stopped cleanly\n";
 }
 
 void AppWindow::populate_rules_list() {
@@ -144,6 +169,8 @@ void AppWindow::populate_rules_list() {
 void AppWindow::add_new_rule(const std::string& target, const std::string& type, ActionType action) {
     if (target.empty()) return;
 
+    std::cout << "[WayBlur:GUI] Adding rule: '" << target << "' [" << type << "]\n";
+
     AppPolicy pol;
     pol.app_id = target;
     pol.type = type;
@@ -156,13 +183,18 @@ void AppWindow::add_new_rule(const std::string& target, const std::string& type,
     policy_.save_config();
     populate_rules_list();
     update_protection_rules();
+    std::cout << "[WayBlur:GUI] Rule added and policy saved\n";
 }
 
 void AppWindow::remove_rule(const std::string& target) {
+    std::cout << "[WayBlur:GUI] Removing rule: '" << target << "'\n";
     if (policy_.remove_policy(target)) {
         policy_.save_config();
         populate_rules_list();
         update_protection_rules();
+        std::cout << "[WayBlur:GUI] Rule removed and policy saved\n";
+    } else {
+        std::cerr << "[WayBlur:GUI] Rule '" << target << "' not found\n";
     }
 }
 

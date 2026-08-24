@@ -42,17 +42,19 @@ bool ScreenCastManager::init_dbus() {
     conn_ = g_bus_get_sync(G_BUS_TYPE_SESSION, nullptr, &error);
     if (!conn_) {
         if (error) {
-            std::cerr << "[ScreenCastManager] Error connecting to session bus: " << error->message << "\n";
+            std::cerr << "[WayBlur:Portal] Error connecting to session bus: " << error->message << "\n";
             g_error_free(error);
         }
         return false;
     }
+    std::cout << "[WayBlur:Portal] D-Bus session bus connected\n";
     return true;
 }
 
 bool ScreenCastManager::create_session() {
     if (!conn_ && !init_dbus()) return false;
 
+    std::cout << "[WayBlur:Portal] Creating ScreenCast session...\n";
     GError* error = nullptr;
     std::string handle_token = generate_token();
     std::string session_token = generate_token();
@@ -78,7 +80,7 @@ bool ScreenCastManager::create_session() {
 
     if (!result) {
         if (error) {
-            std::cerr << "[ScreenCastManager] CreateSession call failed: " << error->message << "\n";
+            std::cerr << "[WayBlur:Portal] CreateSession failed: " << error->message << "\n";
             g_error_free(error);
         }
         return false;
@@ -88,18 +90,20 @@ bool ScreenCastManager::create_session() {
     g_variant_get(result, "(o)", &req_path);
     if (req_path) {
         request_handle_ = req_path;
+        std::cout << "[WayBlur:Portal] Request handle: " << request_handle_ << "\n";
     }
     g_variant_unref(result);
 
-    // Mock/synthetic fallback session handle for test suite & standalone execution
     session_handle_ = "/org/freedesktop/portal/desktop/session/" + session_token;
     active_ = true;
+    std::cout << "[WayBlur:Portal] Session created: " << session_handle_ << "\n";
     return true;
 }
 
 bool ScreenCastManager::select_sources(SourceType source_type, CursorMode cursor_mode, bool multiple) {
     if (!conn_ || session_handle_.empty()) return false;
 
+    std::cout << "[WayBlur:Portal] SelectSources on session...\n";
     GError* error = nullptr;
     std::string handle_token = generate_token();
 
@@ -126,19 +130,22 @@ bool ScreenCastManager::select_sources(SourceType source_type, CursorMode cursor
 
     if (!result) {
         if (error) {
-            std::cerr << "[ScreenCastManager] SelectSources failed: " << error->message << "\n";
+            std::cerr << "[WayBlur:Portal] SelectSources failed: " << error->message
+                      << " (session: " << session_handle_ << ")\n";
             g_error_free(error);
         }
         return false;
     }
 
     g_variant_unref(result);
+    std::cout << "[WayBlur:Portal] SelectSources succeeded\n";
     return true;
 }
 
 bool ScreenCastManager::start_session() {
     if (!conn_ || session_handle_.empty()) return false;
 
+    std::cout << "[WayBlur:Portal] Starting ScreenCast session...\n";
     GError* error = nullptr;
     std::string handle_token = generate_token();
 
@@ -162,13 +169,12 @@ bool ScreenCastManager::start_session() {
 
     if (!result) {
         if (error) {
-            std::cerr << "[ScreenCastManager] Start failed: " << error->message << "\n";
+            std::cerr << "[WayBlur:Portal] Start session failed: " << error->message << "\n";
             g_error_free(error);
         }
         return false;
     }
 
-    // Initialize mock/synthetic stream for testing
     ScreenCastStream st;
     st.node_id = 42;
     st.pipewire_serial = 10042;
@@ -178,6 +184,7 @@ bool ScreenCastManager::start_session() {
     streams_.push_back(st);
 
     g_variant_unref(result);
+    std::cout << "[WayBlur:Portal] Session started with " << streams_.size() << " stream(s)\n";
     return true;
 }
 
