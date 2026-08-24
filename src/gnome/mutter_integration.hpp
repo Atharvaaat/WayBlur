@@ -10,6 +10,7 @@
 namespace wayblur {
 
 struct SurfaceWindowInfo {
+    uint64_t window_id{0};
     std::string app_id;
     std::string title;
     BoundingBox box;

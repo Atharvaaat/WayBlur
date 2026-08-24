@@ -17,7 +17,7 @@ public:
     bool init();
     std::vector<FilterRule> generate_filter_rules(const PrivacyPolicy& policy);
 
-    void inject_synthetic_window(const std::string& app_id, const BoundingBox& box);
+    void inject_synthetic_window(const std::string& app_id, const BoundingBox& box, uint64_t window_id = 0);
     void clear_synthetic_windows();
 
     MutterIntegration& get_mutter() { return mutter_; }

@@ -23,6 +23,7 @@ struct BoundingBox {
 };
 
 struct FilterRule {
+    uint64_t window_id{0};
     std::string app_id;
     ActionType action{ActionType::Allow};
     int radius{30};

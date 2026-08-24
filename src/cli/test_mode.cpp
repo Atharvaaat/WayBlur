@@ -28,15 +28,15 @@ TestModeResult TestMode::run_test() {
     policy.load_config(); // Load default rules (chrome, firefox, keepassxc, obsidian)
 
     WindowTracker tracker;
-    // Inject synthetic desktop application windows
+    // Inject synthetic desktop application windows with unique IDs
     // 1. Fake Gmail (Chrome): (100, 100, 700, 450)
-    tracker.inject_synthetic_window("google-chrome", {100, 100, 700, 450});
+    tracker.inject_synthetic_window("google-chrome", {100, 100, 700, 450}, 101);
     // 2. Fake KeePassXC: (850, 100, 500, 400)
-    tracker.inject_synthetic_window("keepassxc", {850, 100, 500, 400});
+    tracker.inject_synthetic_window("keepassxc", {850, 100, 500, 400}, 102);
     // 3. Fake Obsidian Notes: (100, 580, 600, 450)
-    tracker.inject_synthetic_window("obsidian", {100, 580, 600, 450});
+    tracker.inject_synthetic_window("obsidian", {100, 580, 600, 450}, 103);
     // 4. Terminal (Unprotected): (750, 580, 700, 450)
-    tracker.inject_synthetic_window("gnome-terminal", {750, 580, 700, 450});
+    tracker.inject_synthetic_window("gnome-terminal", {750, 580, 700, 450}, 104);
 
     std::vector<FilterRule> rules = tracker.generate_filter_rules(policy);
 

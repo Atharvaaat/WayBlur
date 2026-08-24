@@ -66,8 +66,6 @@ bool PrivacyPolicy::load_config(const std::string& path) {
 
     if (!std::filesystem::exists(target_path)) {
         policies_ = {
-            {"google-chrome", "app", ActionType::Blur, 30, "black", 16},
-            {"firefox", "app", ActionType::Blur, 30, "black", 16},
             {"keepassxc", "app", ActionType::Solid, 30, "black", 16},
             {"obsidian", "app", ActionType::Blur, 25, "black", 16},
             {"*.internal.net", "dns", ActionType::Blur, 30, "black", 16}
@@ -190,14 +188,18 @@ AppPolicy PrivacyPolicy::get_policy_for_app(const std::string& app_id, const std
 
         if (norm_target.empty()) continue;
 
-        // 1. Direct app match
-        if (norm_app.find(norm_target) != std::string::npos) {
-            return p;
+        // 1. App target match (matches wm_class / app_id)
+        if (p.type == "app" || p.type.empty()) {
+            if (norm_app.find(norm_target) != std::string::npos) {
+                return p;
+            }
         }
 
-        // 2. Title match (domain or window title keyword like "outlook", "office.com", "bank.com")
-        if (!norm_title.empty() && norm_title.find(norm_target) != std::string::npos) {
-            return p;
+        // 2. DNS / Domain target match (matches page domain in window title)
+        if (p.type == "dns") {
+            if (!norm_title.empty() && norm_title.find(norm_target) != std::string::npos) {
+                return p;
+            }
         }
     }
 

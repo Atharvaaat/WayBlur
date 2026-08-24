@@ -10,8 +10,9 @@ bool WindowTracker::init() {
     return mutter_.init();
 }
 
-void WindowTracker::inject_synthetic_window(const std::string& app_id, const BoundingBox& box) {
+void WindowTracker::inject_synthetic_window(const std::string& app_id, const BoundingBox& box, uint64_t window_id) {
     SurfaceWindowInfo win;
+    win.window_id = window_id;
     win.app_id = app_id;
     win.title = app_id;
     win.box = box;
@@ -33,6 +34,7 @@ std::vector<FilterRule> WindowTracker::generate_filter_rules(const PrivacyPolicy
         AppPolicy app_pol = policy.get_policy_for_app(win.app_id, win.title);
         if (app_pol.action != ActionType::Allow) {
             FilterRule rule;
+            rule.window_id = win.window_id;
             rule.app_id = win.app_id;
             rule.action = app_pol.action;
             rule.radius = app_pol.radius;

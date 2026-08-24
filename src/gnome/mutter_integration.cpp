@@ -35,6 +35,15 @@ std::vector<SurfaceWindowInfo> parse_window_json(const std::string& json_str) {
                 return "";
             };
 
+            auto get_uint64 = [&](const std::string& key) -> uint64_t {
+                std::regex key_regex("\"" + key + "\"\\s*:\\s*(\\d+)");
+                std::smatch m;
+                if (std::regex_search(obj, m, key_regex) && m.size() > 1) {
+                    try { return std::stoull(m[1].str()); } catch (...) { return 0; }
+                }
+                return 0;
+            };
+
             auto get_int = [&](const std::string& key) -> int {
                 std::regex key_regex("\"" + key + "\"\\s*:\\s*(-?\\d+)");
                 std::smatch m;
@@ -44,6 +53,7 @@ std::vector<SurfaceWindowInfo> parse_window_json(const std::string& json_str) {
                 return 0;
             };
 
+            win.window_id = get_uint64("window_id");
             win.app_id = get_string("app_id");
             win.title = get_string("title");
             win.box.x = get_int("x");
@@ -52,7 +62,7 @@ std::vector<SurfaceWindowInfo> parse_window_json(const std::string& json_str) {
             win.box.height = get_int("height");
             win.monitor = get_int("monitor");
 
-            if (!win.app_id.empty() || !win.title.empty()) {
+            if (!win.app_id.empty() || !win.title.empty() || win.window_id > 0) {
                 windows.push_back(win);
             }
         }
@@ -63,13 +73,12 @@ std::vector<SurfaceWindowInfo> parse_window_json(const std::string& json_str) {
     return windows;
 }
 
-// The extension JS source embeds per-window masking logic
-static const char* EXTENSION_JS = R"EXTJS(/* WayBlur GNOME Shell Extension — Per-Window Privacy Masks */
+// Extension JS: Window ID matching, Active Workspace filtering, and Minimized/Hidden window exclusion
+static const char* EXTENSION_JS = R"EXTJS(/* WayBlur GNOME Shell Extension — Per-Window Masking with Workspace & Visibility Filtering */
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import Gio from 'gi://Gio';
 import St from 'gi://St';
-import Clutter from 'gi://Clutter';
 
 const WayBlurDBusInterface = `
 <node>
@@ -88,7 +97,7 @@ export default class WayBlurExtension extends Extension {
         this._dbusImpl = Gio.DBusExportedObject.wrapJSObject(WayBlurDBusInterface, this);
         this._dbusImpl.export(Gio.DBus.session, '/org/gnome/Shell/WayBlur');
         this._maskedWindows = [];
-        console.log('[WayBlur] Extension enabled — per-window masking active');
+        console.log('[WayBlur] Extension enabled — per-window active workspace masking active');
     }
 
     disable() {
@@ -108,20 +117,17 @@ export default class WayBlurExtension extends Extension {
                         item.overlay.get_parent().remove_child(item.overlay);
                     }
                     if (item.overlay) item.overlay.destroy();
-                } catch (e) { /* window may already be destroyed */ }
+                } catch (e) { /* window or overlay destroyed */ }
             }
             this._maskedWindows = [];
         }
     }
 
-    _findWindowActorByRect(x, y, width, height) {
+    _findWindowActorById(windowId) {
         let actors = global.get_window_actors();
         for (let actor of actors) {
             let metaWin = actor.get_meta_window();
-            if (!metaWin) continue;
-            let rect = metaWin.get_frame_rect();
-            if (rect.x === x && rect.y === y &&
-                rect.width === width && rect.height === height) {
+            if (metaWin && metaWin.get_id() === windowId) {
                 return actor;
             }
         }
@@ -135,9 +141,9 @@ export default class WayBlurExtension extends Extension {
             if (masks.length === 0) return;
 
             for (let m of masks) {
-                let windowActor = this._findWindowActorByRect(m.x, m.y, m.width, m.height);
+                let windowActor = this._findWindowActorById(m.window_id);
                 if (!windowActor) {
-                    console.log(`[WayBlur] No window actor for ${m.app_id} at (${m.x},${m.y},${m.width},${m.height})`);
+                    console.log(`[WayBlur] Window actor ID ${m.window_id} (${m.app_id}) not found or not active`);
                     continue;
                 }
 
@@ -161,10 +167,10 @@ export default class WayBlurExtension extends Extension {
                 });
                 overlay.add_child(badge);
 
-                // Attach directly to window actor (per-window, respects z-order)
+                // Attach overlay directly to exact target window actor
                 windowActor.add_child(overlay);
                 this._maskedWindows.push({ actor: windowActor, overlay: overlay });
-                console.log(`[WayBlur] Masked: ${m.app_id} (${m.type}) at (${m.x},${m.y})`);
+                console.log(`[WayBlur] Mask applied to window ID ${m.window_id} [${m.app_id}] (${m.type})`);
             }
         } catch (e) {
             console.error('[WayBlur] Error applying masks:', e);
@@ -174,15 +180,21 @@ export default class WayBlurExtension extends Extension {
     GetWindowMetadata() {
         let windows = [];
         let actors = global.get_window_actors();
+        let activeWs = global.display.get_workspace_manager().get_active_workspace();
 
         for (let actor of actors) {
             let metaWin = actor.get_meta_window();
             if (!metaWin) continue;
 
+            // Skip minimized windows, hidden windows, and windows on inactive workspaces
+            if (metaWin.minimized || metaWin.is_hidden()) continue;
+            if (activeWs && !metaWin.showing_on_its_workspace(activeWs)) continue;
+
             let rect = metaWin.get_frame_rect();
             let appId = metaWin.get_wm_class() || metaWin.get_client_machine() || 'unknown';
 
             windows.push({
+                window_id: metaWin.get_id(),
                 app_id: appId.toLowerCase(),
                 title: metaWin.get_title() || '',
                 x: rect.x, y: rect.y,
@@ -285,7 +297,7 @@ std::vector<SurfaceWindowInfo> MutterIntegration::fetch_surface_metadata() {
         g_variant_get(res, "(s)", &json_str);
         if (json_str) {
             result = parse_window_json(std::string(json_str));
-            std::cout << "[WayBlur:Mutter] Fetched " << result.size() << " window(s) from compositor\n";
+            std::cout << "[WayBlur:Mutter] Fetched " << result.size() << " visible window(s) from active workspace\n";
         }
         g_variant_unref(res);
     } else {
@@ -309,6 +321,7 @@ void MutterIntegration::send_privacy_masks(const std::vector<FilterRule>& rules)
         if (rule.action == ActionType::Allow) continue;
         if (!first) ss << ",";
         ss << "{";
+        ss << "\"window_id\":" << rule.window_id << ",";
         ss << "\"app_id\":\"" << rule.app_id << "\",";
         ss << "\"x\":" << rule.box.x << ",";
         ss << "\"y\":" << rule.box.y << ",";
