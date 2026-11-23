@@ -26,6 +26,7 @@ struct DoctorReport {
     bool vulkan_available{false};
     std::string vulkan_details{"Unavailable"};
     std::string gstreamer_version{"Unknown"};
+    std::string ocr_status{"Unknown"};   // sensitive-data detection engine
 
     bool is_wayland_gnome() const {
         return session_type == "Wayland" || session_type == "wayland";

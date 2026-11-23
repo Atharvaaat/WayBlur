@@ -36,7 +36,14 @@ void print_usage() {
               << "  policy               View active privacy policies\n"
               << "  policy --add <target> [--type app|dns] [--action blur|solid|pixelate]  Add a policy rule\n"
               << "  policy --remove <target>  Remove a policy rule\n"
-              << "  protect              Start active privacy screen-share protection\n"
+              << "  protect [--mode data|screen] [--mask-local] [--no-pii] [--ocr-lang <code>]\n"
+              << "                       Start active privacy screen-share protection.\n"
+              << "                       Viewers get a blurred stream while your own screen stays clear.\n"
+              << "                         --mode         data = blur only sensitive data (default),\n"
+              << "                                        screen = blur the whole shared screen\n"
+              << "                         --mask-local   also cover protected windows on your own screen\n"
+              << "                         --no-pii       disable on-screen PII detection (window rules only)\n"
+              << "                         --ocr-lang     Tesseract language(s), default eng (e.g. eng+hin)\n"
               << "  test                 Run synthetic protection test mode\n"
               << "  benchmark            Profile pipeline latency and performance\n"
               << "  gui                  Launch GTK4 / Libadwaita user interface\n"
@@ -146,6 +153,23 @@ int run_cli(int argc, char* argv[]) {
         std::cout << "[WayBlur:CLI] Loading privacy policy configuration...\n";
         PrivacyPolicy policy;
         policy.load_config();
+
+        // Command-line flags override the config file.
+        bool mask_local = false;
+        bool detect_pii = policy.pii_enabled();
+        std::string ocr_lang = policy.ocr_language();
+        BlurMode mode = policy.blur_mode();
+        for (size_t i = 1; i < args.size(); ++i) {
+            if (args[i] == "--mask-local") mask_local = true;
+            else if (args[i] == "--no-pii") detect_pii = false;
+            else if (args[i] == "--ocr-lang" && i + 1 < args.size()) ocr_lang = args[++i];
+            else if (args[i] == "--mode" && i + 1 < args.size()) {
+                std::string m = args[++i];
+                if (m == "screen") mode = BlurMode::FullScreen;
+                else if (m == "data") mode = BlurMode::DataOnly;
+                else { std::cerr << "Unknown --mode '" << m << "' (use data or screen)\n"; return 1; }
+            }
+        }
         std::cout << "[WayBlur:CLI] Loaded " << policy.policies().size() << " protection rule(s)\n";
 
         std::cout << "[WayBlur:CLI] Initializing window tracker (Mutter D-Bus)...\n";
@@ -182,9 +206,23 @@ int run_cli(int argc, char* argv[]) {
         if (pw_fd >= 0 && pipeline.init(pw_fd, node_id) && pipeline.start()) {
             pipeline_active = true;
             std::cout << "[WayBlur:CLI] PipeWire capture pipeline started\n";
+            if (mode == BlurMode::DataOnly && !detect_pii) {
+                std::cout << "[WayBlur:CLI] PII detection off: only window rules are applied\n";
+            } else if (!pipeline.enable_protection(mode, ocr_lang.c_str())) {
+                std::cerr << "[WayBlur:CLI] Warning: OCR is not available, so sensitive data cannot be "
+                             "detected. Use --mode screen to blur the whole shared screen instead. "
+                             "Only window rules are applied for now.\n";
+            } else {
+                pipeline.set_pii_kinds_mask(policy.pii_kinds_mask());
+            }
         } else {
-            std::cout << "[WayBlur:CLI] PipeWire pipeline not available — using compositor-only protection\n";
+            std::cerr << "[WayBlur:CLI] PipeWire stream pipeline NOT available. "
+                         "Falling back to on-screen masks so protected windows stay hidden "
+                         "(this also hides them from you).\n";
         }
+
+        // Fail closed: without the stream pipeline, the on-screen mask is the only protection.
+        const bool use_local_masks = mask_local || !pipeline_active;
 
         std::cout << "[WayBlur:CLI] ✓ Protection ACTIVE. Monitoring windows every 100ms...\n"
                   << "[WayBlur:CLI] Press Ctrl+C to stop.\n";
@@ -194,7 +232,9 @@ int run_cli(int argc, char* argv[]) {
             if (pipeline_active) {
                 pipeline.set_filter_rules(rules);
             }
-            tracker.get_mutter().send_privacy_masks(rules);
+            if (use_local_masks) {
+                tracker.get_mutter().send_privacy_masks(rules);
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
 
@@ -206,11 +246,12 @@ int run_cli(int argc, char* argv[]) {
         monitor.stop_monitoring();
         std::cout << "[WayBlur:CLI] Share session monitor stopped\n";
 
-        // Clear compositor masks on exit
-        std::vector<FilterRule> empty_rules;
-        tracker.get_mutter().send_privacy_masks(empty_rules);
-        std::cout << "[WayBlur:CLI] Compositor masks cleared\n"
-                  << "[WayBlur:CLI] Protection stopped cleanly.\n";
+        if (use_local_masks) {
+            std::vector<FilterRule> empty_rules;
+            tracker.get_mutter().send_privacy_masks(empty_rules);
+            std::cout << "[WayBlur:CLI] Compositor masks cleared\n";
+        }
+        std::cout << "[WayBlur:CLI] Protection stopped cleanly.\n";
         return 0;
     }
 

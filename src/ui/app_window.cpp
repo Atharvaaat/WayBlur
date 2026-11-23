@@ -30,7 +30,10 @@ void AppWindow::update_protection_rules() {
     if (pipeline_active_) {
         pipeline_.set_filter_rules(rules);
     }
-    window_tracker_.get_mutter().send_privacy_masks(rules);
+    // Viewers-only by default: the on-screen mask is used only as a fail-closed fallback.
+    if (!pipeline_active_) {
+        window_tracker_.get_mutter().send_privacy_masks(rules);
+    }
 }
 
 void AppWindow::start_protection() {
@@ -66,9 +69,16 @@ void AppWindow::start_protection() {
     if (pw_fd >= 0 && pipeline_.init(pw_fd, node_id) && pipeline_.start()) {
         pipeline_active_ = true;
         std::cout << "[WayBlur:GUI] PipeWire capture pipeline started\n";
+        if (policy_.pii_enabled() || policy_.blur_mode() == BlurMode::FullScreen) {
+            if (pipeline_.enable_protection(policy_.blur_mode(), policy_.ocr_language().c_str())) {
+                pipeline_.set_pii_kinds_mask(policy_.pii_kinds_mask());
+            } else {
+                std::cout << "[WayBlur:GUI] OCR not available; window rules only\n";
+            }
+        }
     } else {
         pipeline_active_ = false;
-        std::cout << "[WayBlur:GUI] PipeWire pipeline not available — using compositor-only protection\n";
+        std::cout << "[WayBlur:GUI] PipeWire stream pipeline not available — falling back to on-screen masks\n";
     }
 
     // Initial rule generation
@@ -88,7 +98,17 @@ void AppWindow::start_protection() {
 
     if (status_page_) {
         adw_status_page_set_title(ADW_STATUS_PAGE(status_page_), "Privacy Protection Active");
-        adw_status_page_set_description(ADW_STATUS_PAGE(status_page_), "Status: ● PROTECTING | Screen sharing streams masked");
+        std::string desc;
+        if (pipeline_active_ && pipeline_.protection_active()) {
+            desc = policy_.blur_mode() == BlurMode::FullScreen
+                       ? "Sharing the \"WayBlur Privacy Screen\" source: the whole screen is blurred for viewers"
+                       : "Sharing the \"WayBlur Privacy Screen\" source: sensitive data is blurred for viewers";
+        } else if (pipeline_active_) {
+            desc = "Only app/website rules are applied: automatic detection is unavailable (OCR not installed)";
+        } else {
+            desc = "Could not start the sharing stream. Protected windows are covered on your own screen instead.";
+        }
+        adw_status_page_set_description(ADW_STATUS_PAGE(status_page_), desc.c_str());
         adw_status_page_set_icon_name(ADW_STATUS_PAGE(status_page_), "security-high-symbolic");
     }
 }
@@ -186,6 +206,26 @@ void AppWindow::add_new_rule(const std::string& target, const std::string& type,
     std::cout << "[WayBlur:GUI] Rule added and policy saved\n";
 }
 
+void AppWindow::set_blur_mode(BlurMode mode) {
+    policy_.set_blur_mode(mode);
+    policy_.save_config();
+    if (pipeline_active_ && !pipeline_.protection_active()) {
+        // Protection started without the guard (e.g. no OCR): try to turn it on now.
+        pipeline_.enable_protection(mode, policy_.ocr_language().c_str());
+        pipeline_.set_pii_kinds_mask(policy_.pii_kinds_mask());
+    } else if (pipeline_active_ && !pipeline_.set_blur_mode(mode)) {
+        std::cerr << "[WayBlur:GUI] Cannot detect data (OCR unavailable); keeping current mode\n";
+    }
+}
+
+void AppWindow::set_kind_enabled(PiiKind kind, bool enabled) {
+    uint32_t mask = policy_.pii_kinds_mask();
+    mask = enabled ? (mask | pii_kind_bit(kind)) : (mask & ~pii_kind_bit(kind));
+    policy_.set_pii_kinds_mask(mask);
+    policy_.save_config();
+    if (pipeline_active_) pipeline_.set_pii_kinds_mask(mask);
+}
+
 void AppWindow::remove_rule(const std::string& target) {
     std::cout << "[WayBlur:GUI] Removing rule: '" << target << "'\n";
     if (policy_.remove_policy(target)) {
@@ -249,7 +289,7 @@ void AppWindow::build_ui(GtkApplication* app) {
 
     GtkWidget* window = adw_application_window_new(app);
     gtk_window_set_title(GTK_WINDOW(window), "WayBlur — Privacy Protection");
-    gtk_window_set_default_size(GTK_WINDOW(window), 560, 760);
+    gtk_window_set_default_size(GTK_WINDOW(window), 560, 900);
 
     GtkWidget* header_bar = adw_header_bar_new();
     GtkWidget* box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -264,12 +304,13 @@ void AppWindow::build_ui(GtkApplication* app) {
     adw_status_page_set_title(ADW_STATUS_PAGE(status_page_), "Privacy Protection Inactive");
     adw_status_page_set_description(ADW_STATUS_PAGE(status_page_), "Status: ○ STANDBY | Safe to configure rules");
     adw_status_page_set_icon_name(ADW_STATUS_PAGE(status_page_), "security-low-symbolic");
-    gtk_widget_set_margin_top(status_page_, 12);
-    gtk_widget_set_margin_bottom(status_page_, 12);
+    gtk_widget_add_css_class(status_page_, "compact");
+    gtk_widget_set_margin_top(status_page_, 6);
+    gtk_widget_set_margin_bottom(status_page_, 6);
     gtk_box_append(GTK_BOX(main_box), status_page_);
 
     // Enable Extension Button
-    GtkWidget* ext_btn = gtk_button_new_with_label("Install & Enable GNOME Extension");
+    GtkWidget* ext_btn = gtk_button_new_with_label("Enable app/website tracking (GNOME extension)");
     gtk_widget_set_margin_start(ext_btn, 32);
     gtk_widget_set_margin_end(ext_btn, 32);
     gtk_widget_set_margin_bottom(ext_btn, 12);
@@ -294,8 +335,8 @@ void AppWindow::build_ui(GtkApplication* app) {
     gtk_box_append(GTK_BOX(content_box), toggle_group);
 
     GtkWidget* toggle_row = adw_action_row_new();
-    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(toggle_row), "Active Screen-Share Protection");
-    adw_action_row_set_subtitle(ADW_ACTION_ROW(toggle_row), "Automatically mask protected windows &amp; DNS domains");
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(toggle_row), "Protect my screen share");
+    adw_action_row_set_subtitle(ADW_ACTION_ROW(toggle_row), "People watching see a blurred version. Your own screen is not changed.");
 
     status_switch_ = gtk_switch_new();
     gtk_switch_set_active(GTK_SWITCH(status_switch_), FALSE);
@@ -314,9 +355,59 @@ void AppWindow::build_ui(GtkApplication* app) {
         }
     }), this, nullptr, G_CONNECT_DEFAULT);
 
+    // What to blur: just the data (default) or the whole screen.
+    GtkWidget* mode_group = adw_preferences_group_new();
+    adw_preferences_group_set_title(ADW_PREFERENCES_GROUP(mode_group), "What to blur");
+    gtk_box_append(GTK_BOX(content_box), mode_group);
+
+    const char* mode_options[] = {"Sensitive data only", "Whole screen", nullptr};
+    mode_combo_ = adw_combo_row_new();
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(mode_combo_), "Blur mode");
+    adw_action_row_set_subtitle(ADW_ACTION_ROW(mode_combo_),
+        "Hide just the data, or everything");
+    adw_combo_row_set_model(ADW_COMBO_ROW(mode_combo_), G_LIST_MODEL(gtk_string_list_new(mode_options)));
+    adw_combo_row_set_selected(ADW_COMBO_ROW(mode_combo_), policy_.blur_mode() == BlurMode::FullScreen ? 1 : 0);
+    adw_preferences_group_add(ADW_PREFERENCES_GROUP(mode_group), mode_combo_);
+    g_signal_connect_data(mode_combo_, "notify::selected", G_CALLBACK((GCallback)+[](GObject* row, GParamSpec*, gpointer user_data) {
+        auto* self = static_cast<AppWindow*>(user_data);
+        if (!self) return;
+        guint idx = adw_combo_row_get_selected(ADW_COMBO_ROW(row));
+        self->set_blur_mode(idx == 1 ? BlurMode::FullScreen : BlurMode::DataOnly);
+    }), this, nullptr, G_CONNECT_DEFAULT);
+
+    GtkWidget* kinds_group = adw_preferences_group_new();
+    adw_preferences_group_set_title(ADW_PREFERENCES_GROUP(kinds_group), "Sensitive data to hide");
+    adw_preferences_group_set_description(ADW_PREFERENCES_GROUP(kinds_group),
+        "Detected automatically on screen. Only used when blurring sensitive data.");
+    gtk_box_append(GTK_BOX(content_box), kinds_group);
+
+    struct KindRow { PiiKind kind; const char* title; const char* subtitle; };
+    static const KindRow kind_rows[] = {
+        {PiiKind::Email,      "Email addresses",       "name@example.com"},
+        {PiiKind::Phone,      "Phone numbers",         "+91 98765 43210"},
+        {PiiKind::CreditCard, "Card numbers",          "Credit and debit cards"},
+        {PiiKind::Aadhaar,    "Aadhaar numbers",       "12-digit Indian ID"},
+        {PiiKind::PanCard,    "PAN numbers",           "Indian tax ID"},
+        {PiiKind::UsSsn,      "US Social Security numbers", "123-45-6789"},
+        {PiiKind::Secret,     "Passwords, keys and tokens", "API keys, access tokens, private keys"},
+    };
+    struct KindCtx { AppWindow* window; PiiKind kind; };
+    for (const auto& kr : kind_rows) {
+        GtkWidget* row = adw_switch_row_new();
+        adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), kr.title);
+        adw_action_row_set_subtitle(ADW_ACTION_ROW(row), kr.subtitle);
+        adw_switch_row_set_active(ADW_SWITCH_ROW(row), (policy_.pii_kinds_mask() & pii_kind_bit(kr.kind)) != 0);
+        adw_preferences_group_add(ADW_PREFERENCES_GROUP(kinds_group), row);
+        auto* kctx = new KindCtx{this, kr.kind};
+        g_signal_connect_data(row, "notify::active", G_CALLBACK((GCallback)+[](GObject* r, GParamSpec*, gpointer user_data) {
+            auto* c = static_cast<KindCtx*>(user_data);
+            if (c && c->window) c->window->set_kind_enabled(c->kind, adw_switch_row_get_active(ADW_SWITCH_ROW(r)));
+        }), kctx, nullptr, G_CONNECT_DEFAULT);
+    }
+
     // Add New Target Rule Section
     GtkWidget* add_group = adw_preferences_group_new();
-    adw_preferences_group_set_title(ADW_PREFERENCES_GROUP(add_group), "Add App or DNS/Domain Target");
+    adw_preferences_group_set_title(ADW_PREFERENCES_GROUP(add_group), "Always hide an app or website (advanced)");
     gtk_box_append(GTK_BOX(content_box), add_group);
 
     target_entry_ = adw_entry_row_new();
@@ -360,7 +451,7 @@ void AppWindow::build_ui(GtkApplication* app) {
 
     // Active Protection Targets List
     pref_group_ = adw_preferences_group_new();
-    adw_preferences_group_set_title(ADW_PREFERENCES_GROUP(pref_group_), "Active Protection Targets");
+    adw_preferences_group_set_title(ADW_PREFERENCES_GROUP(pref_group_), "Apps and websites always hidden");
     gtk_box_append(GTK_BOX(content_box), pref_group_);
 
     populate_rules_list();

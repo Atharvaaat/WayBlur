@@ -15,6 +15,11 @@ enum class ActionType {
     Pixelate
 };
 
+enum class BlurMode {
+    DataOnly,    // blur only detected sensitive data (default)
+    FullScreen   // blur everything that is shared
+};
+
 struct BoundingBox {
     int x{0};
     int y{0};

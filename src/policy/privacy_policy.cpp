@@ -109,6 +109,25 @@ bool PrivacyPolicy::load_config(const std::string& path) {
             default_action_ = parse_action_string(config["defaults"]["action"].as<std::string>());
         }
 
+        if (config["mode"]) {
+            std::string m = to_lower(config["mode"].as<std::string>());
+            blur_mode_ = (m == "screen" || m == "full" || m == "fullscreen") ? BlurMode::FullScreen
+                                                                              : BlurMode::DataOnly;
+        }
+        if (YAML::Node pii = config["pii_detection"]) {
+            if (pii["enabled"]) pii_enabled_ = pii["enabled"].as<bool>();
+            if (pii["language"]) ocr_language_ = pii["language"].as<std::string>();
+            if (pii["types"] && pii["types"].IsSequence()) {
+                uint32_t mask = 0;
+                for (const auto& t : pii["types"]) {
+                    PiiKind k;
+                    if (pii_kind_from_name(to_lower(t.as<std::string>()), k)) mask |= pii_kind_bit(k);
+                    else std::cerr << "[PrivacyPolicy] Unknown PII type '" << t.as<std::string>() << "' ignored\n";
+                }
+                pii_kinds_mask_ = mask;
+            }
+        }
+
         return true;
     } catch (const std::exception& e) {
         std::cerr << "[PrivacyPolicy] Error loading YAML config: " << e.what() << "\n";
@@ -148,6 +167,19 @@ bool PrivacyPolicy::save_config(const std::string& path) {
         YAML::Node def_node;
         def_node["action"] = action_to_string(default_action_);
         root["defaults"] = def_node;
+
+        root["mode"] = (blur_mode_ == BlurMode::FullScreen) ? "screen" : "data";
+        YAML::Node pii_node;
+        pii_node["enabled"] = pii_enabled_;
+        pii_node["language"] = ocr_language_;
+        YAML::Node types;
+        for (int i = 0; i <= static_cast<int>(PiiKind::Secret); ++i) {
+            if (pii_kinds_mask_ & pii_kind_bit(static_cast<PiiKind>(i))) {
+                types.push_back(pii_kind_name(static_cast<PiiKind>(i)));
+            }
+        }
+        pii_node["types"] = types;
+        root["pii_detection"] = pii_node;
 
         std::ofstream fout(target_path);
         fout << root;

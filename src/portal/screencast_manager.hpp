@@ -56,6 +56,16 @@ private:
     std::function<void()> on_closed_cb_;
     guint signal_id_{0};
 
+    // Portal methods answer asynchronously on org.freedesktop.portal.Request::Response.
+    // Calls `do_call`, then pumps the main context until the response for `token`
+    // arrives. On success returns true with the response `results` (a{sv}, caller unrefs).
+    bool call_and_wait(const std::string& token,
+                       const std::function<bool()>& do_call,
+                       int timeout_ms,
+                       GVariant** results);
+    std::string request_path_for(const std::string& token) const;
+    std::string sender_token() const;
+
     static void on_signal_closed(GDBusConnection* connection,
                                  const gchar* sender_name,
                                  const gchar* object_path,
