@@ -1,4 +1,5 @@
 #include "core/doctor.hpp"
+#include "pii/pii_ocr.hpp"
 #include "gnome/mutter_integration.hpp"
 
 #include <gio/gio.h>
@@ -223,7 +224,7 @@ DoctorReport run_diagnostics() {
         if (!dpkg_mutter.empty()) {
             report.mutter_version = "mutter " + dpkg_mutter;
         } else {
-            report.mutter_version = "50.1 (GNOME 50)";
+            report.mutter_version = "Not found (is this a GNOME session?)";
         }
     }
 
@@ -286,6 +287,18 @@ DoctorReport run_diagnostics() {
         report.gstreamer_version = "Unknown";
     }
 
+    // OCR (sensitive-data detection)
+    {
+        OcrEngine ocr;
+        if (!OcrEngine::compiled_in()) {
+            report.ocr_status = "not built in (rebuild with libtesseract-dev)";
+        } else if (ocr.init("eng")) {
+            report.ocr_status = "ready, English model " + ocr.model_source();
+        } else {
+            report.ocr_status = "unavailable: language model not found";
+        }
+    }
+
     return report;
 }
 
@@ -309,6 +322,7 @@ void print_doctor_report(const DoctorReport& report, std::ostream& os) {
     os << "EGL: " << (report.egl_available ? "available (" + report.egl_details + ")" : "unavailable") << "\n";
     os << "Vulkan: " << (report.vulkan_available ? "available" : "unavailable") << "\n";
     os << "GStreamer: " << report.gstreamer_version << "\n";
+    os << "Sensitive-data detection: " << report.ocr_status << "\n";
 }
 
 } // namespace wayblur

@@ -29,6 +29,8 @@ private:
     void populate_rules_list();
     void add_new_rule(const std::string& target, const std::string& type, ActionType action);
     void remove_rule(const std::string& target);
+    void set_blur_mode(BlurMode mode);
+    void set_kind_enabled(PiiKind kind, bool enabled);
 
     void run_doctor_dialog(GtkWindow* parent);
     void run_testmode_dialog(GtkWindow* parent);
@@ -46,6 +48,7 @@ private:
     GtkWidget* target_entry_{nullptr};
     GtkWidget* type_combo_{nullptr};
     GtkWidget* action_combo_{nullptr};
+    GtkWidget* mode_combo_{nullptr};
 
     bool is_protecting_{false};
     bool pipeline_active_{false};

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=WayBlur
+GenericName=Screen-share privacy
+Comment=Blur sensitive data in what you share on screen
+Exec=wayblur gui
+Icon=org.wayblur.desktop
+Terminal=false
+Categories=Utility;GNOME;GTK;Security;
+Keywords=privacy;blur;screen;share;pii;
+StartupNotify=true

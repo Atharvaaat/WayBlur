@@ -13,3 +13,6 @@ build/
 # Temporary config & logs
 /tmp/*
 *.log
+
+# Packaging output
+dist/
